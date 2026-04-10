@@ -15,9 +15,11 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const STORAGE_KEY = 'songbook-pwa-catalog-v1';
+const AUTH_STORAGE_KEY = 'songbook-pwa-auth-v1';
 const DB_NAME = 'songbook-pwa-files';
 const DB_VERSION = 1;
 const FILE_STORE = 'pdfs';
+const API_BASE_URL = 'https://biblecircle.org/app';
 
 const panelClass = 'rounded-2xl border border-slate-200 bg-white shadow-sm';
 const panelHeaderClass = 'border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900';
@@ -38,6 +40,24 @@ const dangerGhostButtonClass =
 const listItemBaseClass = 'block w-full rounded-xl border px-4 py-3 text-left transition';
 const listItemClass = `${listItemBaseClass} border-slate-200 bg-white hover:bg-slate-50`;
 const listItemActiveClass = `${listItemBaseClass} border-sky-500 bg-sky-50 ring-1 ring-sky-200`;
+
+function HomeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5">
+      <path d="M3 10.5 12 3l9 7.5" />
+      <path d="M5 9.5V21h14V9.5" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5">
+      <path d="M12 8.5A3.5 3.5 0 1 0 12 15.5A3.5 3.5 0 1 0 12 8.5z" />
+      <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.2a1 1 0 0 0-.9.6z" />
+    </svg>
+  );
+}
 
 function openPdfDb() {
   return new Promise((resolve, reject) => {
@@ -126,6 +146,24 @@ function saveCatalog(books) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
 }
 
+function loadStoredAuth() {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredAuth(session) {
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+}
+
+function clearStoredAuth() {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
 function loadCatalog() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -139,6 +177,25 @@ function loadCatalog() {
 async function fileToPdfDoc(file) {
   const buffer = await file.arrayBuffer();
   return pdfjsLib.getDocument({ data: buffer }).promise;
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const contentType = response.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json') ? await response.json() : null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error || 'Request failed');
+  }
+
+  return payload;
 }
 
 async function extractSongSuggestions(file) {
@@ -262,49 +319,46 @@ async function pickFolderFiles() {
   return files;
 }
 
-function AppHeader({ fileInputRef, books, onAddFolder, onExportCatalog, onImportCatalog, onFilesChosen, onClear }) {
+function TopIconLink({ to, active, label, children }) {
+  return (
+    <Link
+      to={to}
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-10 w-10 items-center justify-center rounded-full border transition ${
+        active ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+      }`}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function AppHeader() {
+  const location = useLocation();
+  const onManagePage = location.pathname.startsWith('/manage');
+
   return (
     <header className="mb-4 flex flex-col gap-4">
-      <div>
-        <div className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-700">
-          Offline Songbooks
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-700">
+            Offline Songbooks
+          </div>
+          <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Song Book Library</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+            Browse books, open a song list, and jump straight to the PDF page you need on desktop or mobile.
+          </p>
         </div>
-        <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Song Book Library</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-          Browse books, open a song list, and jump straight to the PDF page you need on desktop or mobile.
-        </p>
-      </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        <button className={primaryButtonClass} onClick={onAddFolder}>
-          Add folder
-        </button>
-        <button className={secondaryButtonClass} onClick={() => fileInputRef.current?.click()}>
-          Add PDF files
-        </button>
-        <button className={secondaryButtonClass} onClick={onExportCatalog} disabled={!books.length}>
-          Export catalog
-        </button>
-        <label className={secondaryButtonClass}>
-          Import catalog
-          <input
-            type="file"
-            accept="application/json"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && onImportCatalog(e.target.files[0])}
-          />
-        </label>
-        <button className={dangerGhostButtonClass} onClick={onClear} disabled={!books.length}>
-          Clear
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/pdf"
-          multiple
-          className="hidden"
-          onChange={(e) => onFilesChosen(e.target.files)}
-        />
+        <div className="flex items-center gap-2">
+          <TopIconLink to="/" active={!onManagePage} label="Main song page">
+            <HomeIcon />
+          </TopIconLink>
+          <TopIconLink to="/manage" active={onManagePage} label="Manage library">
+            <SettingsIcon />
+          </TopIconLink>
+        </div>
       </div>
     </header>
   );
@@ -394,18 +448,6 @@ function SongListPage({ books, updateBook }) {
       subtitle={`${book.songs.length} song${book.songs.length === 1 ? '' : 's'} · ${book.pageCount || '?'} pages`}
       backTo="/"
       backLabel="Books"
-      footer={
-        <button
-          className={secondaryButtonClass}
-          onClick={() =>
-            updateBook(book.id, {
-              songs: [...book.songs, { id: uid('song'), title: 'New song', page: 1 }],
-            })
-          }
-        >
-          Add song
-        </button>
-      }
     >
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
@@ -485,6 +527,236 @@ function SongListPage({ books, updateBook }) {
         )}
       </div>
     </PageFrame>
+  );
+}
+
+function ManagePage({
+  books,
+  isRestoringFiles,
+  authSession,
+  fileInputRef,
+  catalogInputRef,
+  onAddFolder,
+  onFilesChosen,
+  onExportCatalog,
+  onImportCatalog,
+  onClear,
+  onAuthSuccess,
+  onLogout,
+  updateBook,
+}) {
+  const [authMode, setAuthMode] = useState('login');
+  const [authForm, setAuthForm] = useState({
+    displayName: '',
+    email: '',
+    password: '',
+  });
+  const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  async function handleAuthSubmit(event) {
+    event.preventDefault();
+    setAuthError('');
+    setAuthSuccess('');
+    setAuthSubmitting(true);
+
+    try {
+      const payload =
+        authMode === 'register'
+          ? {
+              email: authForm.email,
+              password: authForm.password,
+              displayName: authForm.displayName,
+            }
+          : {
+              email: authForm.email,
+              password: authForm.password,
+            };
+
+      const session = await apiRequest(`/api/auth/${authMode}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      onAuthSuccess(session);
+      setAuthSuccess(authMode === 'register' ? 'Registration successful.' : 'Login successful.');
+      setAuthForm((current) => ({ ...current, password: '' }));
+    } catch (error) {
+      setAuthError(error.message || 'Authentication failed.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <PageFrame title="Account" subtitle="Register or log in from the app">
+        {authSession ? (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">
+                {authSession.user?.email || 'Signed in'}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {authSession.user?.userUuid ? `User ID: ${authSession.user.userUuid}` : 'Session active'}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button className={dangerGhostButtonClass} onClick={onLogout}>
+                Log out
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+              <button
+                className={`rounded-md px-3 py-2 text-sm font-medium ${authMode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
+                onClick={() => {
+                  setAuthMode('login');
+                  setAuthError('');
+                  setAuthSuccess('');
+                }}
+                type="button"
+              >
+                Login
+              </button>
+              <button
+                className={`rounded-md px-3 py-2 text-sm font-medium ${authMode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
+                onClick={() => {
+                  setAuthMode('register');
+                  setAuthError('');
+                  setAuthSuccess('');
+                }}
+                type="button"
+              >
+                Register
+              </button>
+            </div>
+
+            <form className="flex flex-col gap-3" onSubmit={handleAuthSubmit}>
+              {authMode === 'register' ? (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-slate-700">Display name</label>
+                  <input
+                    className={inputClass}
+                    value={authForm.displayName}
+                    onChange={(e) => setAuthForm((current) => ({ ...current, displayName: e.target.value }))}
+                    placeholder="Your name"
+                  />
+                </div>
+              ) : null}
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-slate-700">Email</label>
+                <input
+                  className={inputClass}
+                  type="email"
+                  value={authForm.email}
+                  onChange={(e) => setAuthForm((current) => ({ ...current, email: e.target.value }))}
+                  placeholder="you@example.com"
+                  required
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-slate-700">Password</label>
+                <input
+                  className={inputClass}
+                  type="password"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm((current) => ({ ...current, password: e.target.value }))}
+                  placeholder={authMode === 'register' ? 'At least 8 characters' : 'Your password'}
+                  required
+                />
+              </div>
+
+              {authError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{authError}</div> : null}
+              {authSuccess ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{authSuccess}</div> : null}
+
+              <button className={primaryButtonClass} type="submit" disabled={authSubmitting}>
+                {authSubmitting ? 'Please wait…' : authMode === 'register' ? 'Create account' : 'Log in'}
+              </button>
+            </form>
+          </div>
+        )}
+      </PageFrame>
+
+      <PageFrame title="Manage Library" subtitle="Import, export, add books, and add songs from one place">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button className={primaryButtonClass} onClick={onAddFolder}>
+            Add folder
+          </button>
+          <button className={secondaryButtonClass} onClick={() => fileInputRef.current?.click()}>
+            Add PDF files
+          </button>
+          <button className={secondaryButtonClass} onClick={onExportCatalog} disabled={!books.length}>
+            Export catalog
+          </button>
+          <button className={secondaryButtonClass} onClick={() => catalogInputRef.current?.click()}>
+            Import catalog
+          </button>
+          <button className={`${dangerGhostButtonClass} sm:col-span-2`} onClick={onClear} disabled={!books.length}>
+            Clear library
+          </button>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf"
+          multiple
+          className="hidden"
+          onChange={(e) => onFilesChosen(e.target.files)}
+        />
+        <input
+          ref={catalogInputRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => e.target.files?.[0] && onImportCatalog(e.target.files[0])}
+        />
+      </PageFrame>
+
+      <PageFrame title="Books" subtitle="Add a song directly into any book">
+        {isRestoringFiles ? (
+          <div className={emptyPanelClass}>Restoring saved PDFs…</div>
+        ) : books.length === 0 ? (
+          <div className={emptyPanelClass}>No books loaded yet.</div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {books.map((book) => (
+              <div key={book.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">{book.title}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {book.songs.length} songs · {book.pageCount || '?'} pages
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className={secondaryButtonClass}
+                      onClick={() =>
+                        updateBook(book.id, {
+                          songs: [...book.songs, { id: uid('song'), title: 'New song', page: 1 }],
+                        })
+                      }
+                    >
+                      Add song
+                    </button>
+                    <Link to={`/books/${book.id}`} className={secondaryButtonClass}>
+                      Open songs
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </PageFrame>
+    </div>
   );
 }
 
@@ -639,18 +911,25 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
 function MobileTabs({ books }) {
   const location = useLocation();
   const { bookId } = useParams();
+  const onManagePage = location.pathname.startsWith('/manage');
 
   const book = books.find((entry) => entry.id === bookId) || null;
 
   const tabs = [
     { label: 'Books', to: '/' },
     { label: 'Songs', to: book ? `/books/${book.id}` : '/' },
+    { label: 'Manage', to: '/manage' },
   ];
 
   return (
     <nav className="mb-4 flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
       {tabs.map((tab) => {
-        const active = tab.to === '/' ? location.pathname === '/' : location.pathname.startsWith(tab.to);
+        const active =
+          tab.to === '/'
+            ? location.pathname === '/'
+            : tab.to === '/manage'
+              ? onManagePage
+              : location.pathname.startsWith(tab.to);
         return (
           <Link
             key={tab.label}
@@ -670,12 +949,22 @@ function MobileTabs({ books }) {
 export default function App() {
   const [books, setBooks] = useState(() => loadCatalog().map(bookFromStored));
   const [isRestoringFiles, setIsRestoringFiles] = useState(true);
+  const [authSession, setAuthSession] = useState(() => loadStoredAuth());
   const fileInputRef = useRef(null);
+  const catalogInputRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     saveCatalog(books);
   }, [books]);
+
+  useEffect(() => {
+    if (authSession) {
+      saveStoredAuth(authSession);
+    } else {
+      clearStoredAuth();
+    }
+  }, [authSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -805,23 +1094,43 @@ export default function App() {
     navigate('/');
   }
 
+  function handleAuthSuccess(session) {
+    setAuthSession(session);
+  }
+
+  function handleLogout() {
+    setAuthSession(null);
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
-      <AppHeader
-        fileInputRef={fileInputRef}
-        books={books}
-        onAddFolder={handleAddFolder}
-        onExportCatalog={exportCatalog}
-        onImportCatalog={importCatalog}
-        onFilesChosen={handleFilesChosen}
-        onClear={handleClear}
-      />
+      <AppHeader />
       <SectionNotice />
       <MobileTabs books={books} />
 
       <Routes>
         <Route path="/" element={<BooksPage books={books} isRestoringFiles={isRestoringFiles} />} />
         <Route path="/books/:bookId" element={<SongListPage books={books} updateBook={updateBook} />} />
+        <Route
+          path="/manage"
+          element={
+            <ManagePage
+              books={books}
+              isRestoringFiles={isRestoringFiles}
+              authSession={authSession}
+              fileInputRef={fileInputRef}
+              catalogInputRef={catalogInputRef}
+              onAddFolder={handleAddFolder}
+              onFilesChosen={handleFilesChosen}
+              onExportCatalog={exportCatalog}
+              onImportCatalog={importCatalog}
+              onClear={handleClear}
+              onAuthSuccess={handleAuthSuccess}
+              onLogout={handleLogout}
+              updateBook={updateBook}
+            />
+          }
+        />
         <Route
           path="/books/:bookId/songs/:songId"
           element={<SongViewerPage books={books} updateBook={updateBook} isRestoringFiles={isRestoringFiles} />}
