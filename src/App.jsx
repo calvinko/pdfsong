@@ -1,4 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -8,6 +18,26 @@ const STORAGE_KEY = 'songbook-pwa-catalog-v1';
 const DB_NAME = 'songbook-pwa-files';
 const DB_VERSION = 1;
 const FILE_STORE = 'pdfs';
+
+const panelClass = 'rounded-2xl border border-slate-200 bg-white shadow-sm';
+const panelHeaderClass = 'border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900';
+const panelBodyClass = 'p-4';
+const emptyPanelClass = 'rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600';
+const inputClass =
+  'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200';
+const pageInputClass =
+  'w-20 rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200';
+const secondaryButtonClass =
+  'inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45';
+const primaryButtonClass =
+  'inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-45';
+const ghostButtonClass =
+  'inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45';
+const dangerGhostButtonClass =
+  'inline-flex items-center justify-center rounded-lg border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45';
+const listItemBaseClass = 'block w-full rounded-xl border px-4 py-3 text-left transition';
+const listItemClass = `${listItemBaseClass} border-slate-200 bg-white hover:bg-slate-50`;
+const listItemActiveClass = `${listItemBaseClass} border-sky-500 bg-sky-50 ring-1 ring-sky-200`;
 
 function openPdfDb() {
   return new Promise((resolve, reject) => {
@@ -52,7 +82,7 @@ async function withStore(mode, work) {
       reject(tx.error || new Error('IndexedDB transaction failed.'));
     });
 
-    Promise.resolve(work(store, tx)).then(finish(resolve), finish(reject));
+    Promise.resolve(work(store)).then(finish(resolve), finish(reject));
   });
 }
 
@@ -232,7 +262,118 @@ async function pickFolderFiles() {
   return files;
 }
 
-function SongEditor({ book, onBookChange, onOpenSong }) {
+function AppHeader({ fileInputRef, books, onAddFolder, onExportCatalog, onImportCatalog, onFilesChosen, onClear }) {
+  return (
+    <header className="mb-4 flex flex-col gap-4">
+      <div>
+        <div className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-700">
+          Offline Songbooks
+        </div>
+        <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Song Book Library</h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+          Browse books, open a song list, and jump straight to the PDF page you need on desktop or mobile.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <button className={primaryButtonClass} onClick={onAddFolder}>
+          Add folder
+        </button>
+        <button className={secondaryButtonClass} onClick={() => fileInputRef.current?.click()}>
+          Add PDF files
+        </button>
+        <button className={secondaryButtonClass} onClick={onExportCatalog} disabled={!books.length}>
+          Export catalog
+        </button>
+        <label className={secondaryButtonClass}>
+          Import catalog
+          <input
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && onImportCatalog(e.target.files[0])}
+          />
+        </label>
+        <button className={dangerGhostButtonClass} onClick={onClear} disabled={!books.length}>
+          Clear
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf"
+          multiple
+          className="hidden"
+          onChange={(e) => onFilesChosen(e.target.files)}
+        />
+      </div>
+    </header>
+  );
+}
+
+function SectionNotice() {
+  return (
+    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+      On Android Chrome and desktop Chromium browsers, <strong>Add folder</strong> can open a local directory. On browsers without
+      folder access, use <strong>Add PDF files</strong>. PDFs are cached in IndexedDB after the first import.
+    </div>
+  );
+}
+
+function PageFrame({ title, subtitle, backTo, backLabel, children, footer }) {
+  return (
+    <section className={`${panelClass} overflow-hidden`}>
+      <div className={panelHeaderClass}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-base font-semibold text-slate-900">{title}</div>
+            {subtitle ? <div className="mt-1 text-sm font-normal text-slate-500">{subtitle}</div> : null}
+          </div>
+          {backTo ? (
+            <Link to={backTo} className={secondaryButtonClass}>
+              {backLabel || 'Back'}
+            </Link>
+          ) : null}
+        </div>
+      </div>
+      <div className={panelBodyClass}>{children}</div>
+      {footer ? <div className="border-t border-slate-200 p-4">{footer}</div> : null}
+    </section>
+  );
+}
+
+function BooksPage({ books, isRestoringFiles }) {
+  if (isRestoringFiles) {
+    return (
+      <PageFrame title="Books" subtitle="Restoring saved PDFs">
+        <div className={emptyPanelClass}>Restoring saved PDFs…</div>
+      </PageFrame>
+    );
+  }
+
+  return (
+    <PageFrame title="Books" subtitle={`${books.length} book${books.length === 1 ? '' : 's'} in your library`}>
+      {books.length === 0 ? (
+        <div className={emptyPanelClass}>No books loaded yet.</div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {books.map((book) => (
+            <Link key={book.id} to={`/books/${book.id}`} className={listItemClass}>
+              <div className="text-sm font-semibold text-slate-900">{book.title}</div>
+              <div className="mt-1 text-xs text-slate-500">
+                {book.songs.length} songs · {book.pageCount || '?'} pages
+                {book.missingFile ? ' · relink needed' : ''}
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </PageFrame>
+  );
+}
+
+function SongListPage({ books, updateBook }) {
+  const { bookId } = useParams();
+  const book = books.find((entry) => entry.id === bookId);
   const [draftTitle, setDraftTitle] = useState(book?.title || '');
 
   useEffect(() => {
@@ -240,82 +381,110 @@ function SongEditor({ book, onBookChange, onOpenSong }) {
   }, [book?.id, book?.title]);
 
   if (!book) {
-    return <div className="empty-panel">Choose a book to see its songs.</div>;
+    return (
+      <PageFrame title="Book not found" backTo="/" backLabel="Books">
+        <div className={emptyPanelClass}>This book is no longer available.</div>
+      </PageFrame>
+    );
   }
 
   return (
-    <div className="panel-body stack-gap">
-      <div className="field-row">
-        <label className="field-label">Book title</label>
-        <input
-          className="text-input"
-          value={draftTitle}
-          onChange={(e) => setDraftTitle(e.target.value)}
-          onBlur={() => onBookChange(book.id, { title: draftTitle || book.title })}
-        />
-      </div>
-
-      <div className="toolbar">
+    <PageFrame
+      title={book.title}
+      subtitle={`${book.songs.length} song${book.songs.length === 1 ? '' : 's'} · ${book.pageCount || '?'} pages`}
+      backTo="/"
+      backLabel="Books"
+      footer={
         <button
-          className="secondary-btn"
+          className={secondaryButtonClass}
           onClick={() =>
-            onBookChange(book.id, {
+            updateBook(book.id, {
               songs: [...book.songs, { id: uid('song'), title: 'New song', page: 1 }],
             })
           }
         >
           Add song
         </button>
-      </div>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-slate-700">Book title</label>
+          <input
+            className={inputClass}
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onBlur={() => updateBook(book.id, { title: draftTitle || book.title })}
+          />
+        </div>
 
-      <div className="song-editor-list">
         {book.songs.length === 0 ? (
-          <div className="empty-panel small">
-            No songs found automatically. Add them manually, or use a PDF with a readable index page.
-          </div>
-        ) : null}
+          <div className={emptyPanelClass}>No songs found automatically. Add them manually to start building the list.</div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {book.songs
+              .slice()
+              .sort((a, b) => a.page - b.page || a.title.localeCompare(b.title))
+              .map((song, index) => (
+                <div key={song.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">{song.title}</div>
+                      <div className="text-xs text-slate-500">Song {index + 1}</div>
+                    </div>
+                    <Link
+                      to={`/books/${book.id}/songs/${song.id}`}
+                      className={`${primaryButtonClass} px-3 py-1.5 text-xs`}
+                    >
+                      Open
+                    </Link>
+                  </div>
 
-        {book.songs.map((song, index) => (
-          <div key={song.id} className="song-editor-item">
-            <input
-              className="text-input"
-              value={song.title}
-              onChange={(e) => {
-                const songs = book.songs.map((entry) =>
-                  entry.id === song.id ? { ...entry, title: e.target.value } : entry
-                );
-                onBookChange(book.id, { songs });
-              }}
-            />
-            <input
-              className="page-input"
-              type="number"
-              min="1"
-              max={book.pageCount || 1}
-              value={song.page}
-              onChange={(e) => {
-                const songs = book.songs.map((entry) =>
-                  entry.id === song.id
-                    ? { ...entry, page: clampPage(e.target.value, book.pageCount) }
-                    : entry
-                );
-                onBookChange(book.id, { songs });
-              }}
-            />
-            <button className="ghost-btn" onClick={() => onOpenSong(song.page)}>
-              Open
-            </button>
-            <button
-              className="ghost-btn danger"
-              onClick={() => onBookChange(book.id, { songs: book.songs.filter((entry) => entry.id !== song.id) })}
-            >
-              Remove
-            </button>
-            <span className="song-index">{index + 1}</span>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_92px_auto]">
+                    <input
+                      className={inputClass}
+                      value={song.title}
+                      onChange={(e) =>
+                        updateBook(book.id, {
+                          songs: book.songs.map((entry) =>
+                            entry.id === song.id ? { ...entry, title: e.target.value } : entry
+                          ),
+                        })
+                      }
+                    />
+                    <input
+                      className={`${pageInputClass} w-full`}
+                      type="number"
+                      min="1"
+                      max={book.pageCount || 1}
+                      value={song.page}
+                      onChange={(e) =>
+                        updateBook(book.id, {
+                          songs: book.songs.map((entry) =>
+                            entry.id === song.id
+                              ? { ...entry, page: clampPage(e.target.value, book.pageCount) }
+                              : entry
+                          ),
+                        })
+                      }
+                    />
+                    <button
+                      className={dangerGhostButtonClass}
+                      onClick={() =>
+                        updateBook(book.id, {
+                          songs: book.songs.filter((entry) => entry.id !== song.id),
+                        })
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
           </div>
-        ))}
+        )}
       </div>
-    </div>
+    </PageFrame>
   );
 }
 
@@ -339,7 +508,7 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, title }) {
         const page = await pdf.getPage(safePage);
         if (cancelled) return;
 
-        const viewport = page.getViewport({ scale: 1.25 });
+        const viewport = page.getViewport({ scale: 1.2 });
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
         const ratio = window.devicePixelRatio || 1;
@@ -365,38 +534,144 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, title }) {
     };
   }, [file, url, pageNumber, onPageCount]);
 
-  if (!file || !url) {
-    return <div className="empty-panel">Select a song to open its PDF page.</div>;
-  }
+  if (!file || !url) return <div className={emptyPanelClass}>Select a song to open its PDF page.</div>;
 
   return (
-    <div className="viewer-wrap">
-      <div className="viewer-header">
-        <div>
-          <div className="viewer-title">{title}</div>
-          <div className="viewer-subtitle">
-            Page {pageNumber} of {pageCount || '?'}
-          </div>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <div className="text-lg font-semibold text-slate-900">{title}</div>
+        <div className="text-sm text-slate-500">
+          Page {pageNumber} of {pageCount || '?'}
         </div>
-        <a className="secondary-btn link-btn" href={url} target="_blank" rel="noreferrer">
-          Open PDF
-        </a>
       </div>
-      {loading ? <div className="status-line">Rendering page…</div> : null}
-      {error ? <div className="status-line error">{error}</div> : null}
-      <div className="canvas-scroller">
-        <canvas ref={canvasRef} className="pdf-canvas" />
+      {loading ? <div className={emptyPanelClass}>Rendering page…</div> : null}
+      {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
+      <div className="overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+        <canvas ref={canvasRef} className="mx-auto block h-auto max-w-full rounded-lg bg-white shadow-sm" />
       </div>
+      <a className={`${secondaryButtonClass} w-full sm:w-fit`} href={url} target="_blank" rel="noreferrer">
+        Open PDF in new tab
+      </a>
     </div>
+  );
+}
+
+function SongViewerPage({ books, updateBook, isRestoringFiles }) {
+  const { bookId, songId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const book = books.find((entry) => entry.id === bookId);
+  const song = book?.songs.find((entry) => entry.id === songId) || null;
+
+  const currentPage = useMemo(() => {
+    if (!book || !song) return 1;
+    const fromQuery = searchParams.get('page');
+    return clampPage(fromQuery || song.page, book.pageCount || song.page);
+  }, [book, song, searchParams]);
+
+  useEffect(() => {
+    if (!book || !song) return;
+    const fromQuery = searchParams.get('page');
+    const safePage = String(clampPage(fromQuery || song.page, book.pageCount || song.page));
+    if (fromQuery !== safePage) {
+      setSearchParams({ page: safePage }, { replace: true });
+    }
+  }, [book, song, searchParams, setSearchParams]);
+
+  if (!book || !song) {
+    return (
+      <PageFrame title="Song not found" backTo={book ? `/books/${book.id}` : '/'} backLabel={book ? 'Songs' : 'Books'}>
+        <div className={emptyPanelClass}>This song is no longer available.</div>
+      </PageFrame>
+    );
+  }
+
+  const goToPage = (value) => {
+    setSearchParams({ page: String(clampPage(value, book.pageCount || currentPage)) });
+  };
+
+  return (
+    <PageFrame
+      title={song.title}
+      subtitle={`${book.title} · target page ${song.page}`}
+      backTo={`/books/${book.id}`}
+      backLabel="Songs"
+      footer={
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button className={ghostButtonClass} onClick={() => goToPage(currentPage - 1)}>
+            Prev
+          </button>
+          <input
+            className={pageInputClass}
+            type="number"
+            min="1"
+            max={book.pageCount || 1}
+            value={currentPage}
+            onChange={(e) => goToPage(e.target.value)}
+          />
+          <button className={ghostButtonClass} onClick={() => goToPage(currentPage + 1)}>
+            Next
+          </button>
+        </div>
+      }
+    >
+      {isRestoringFiles ? (
+        <div className={emptyPanelClass}>Restoring saved PDFs…</div>
+      ) : book.missingFile ? (
+        <div className={emptyPanelClass}>This book was restored without its PDF file. Re-add the PDF to open pages.</div>
+      ) : (
+        <PdfViewer
+          file={book.file}
+          url={book.url}
+          pageNumber={currentPage}
+          pageCount={book.pageCount}
+          onPageCount={(count) => {
+            if (count !== book.pageCount) {
+              updateBook(book.id, { pageCount: count });
+            }
+          }}
+          title={song.title}
+        />
+      )}
+    </PageFrame>
+  );
+}
+
+function MobileTabs({ books }) {
+  const location = useLocation();
+  const { bookId } = useParams();
+
+  const book = books.find((entry) => entry.id === bookId) || null;
+
+  const tabs = [
+    { label: 'Books', to: '/' },
+    { label: 'Songs', to: book ? `/books/${book.id}` : '/' },
+  ];
+
+  return (
+    <nav className="mb-4 flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+      {tabs.map((tab) => {
+        const active = tab.to === '/' ? location.pathname === '/' : location.pathname.startsWith(tab.to);
+        return (
+          <Link
+            key={tab.label}
+            to={tab.to}
+            className={`flex-1 rounded-lg px-3 py-2 text-center text-sm font-medium ${
+              active ? 'bg-sky-50 text-sky-700' : 'text-slate-600'
+            }`}
+          >
+            {tab.label}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
 
 export default function App() {
   const [books, setBooks] = useState(() => loadCatalog().map(bookFromStored));
-  const [selectedBookId, setSelectedBookId] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
   const [isRestoringFiles, setIsRestoringFiles] = useState(true);
   const fileInputRef = useRef(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     saveCatalog(books);
@@ -435,9 +710,7 @@ export default function App() {
 
     withStore('readwrite', async (store) => {
       const keys = await requestToPromise(store.getAllKeys());
-      await Promise.all(
-        keys.filter((key) => !knownIds.has(key)).map((key) => requestToPromise(store.delete(key)))
-      );
+      await Promise.all(keys.filter((key) => !knownIds.has(key)).map((key) => requestToPromise(store.delete(key))));
     }).catch((error) => {
       console.error(error);
     });
@@ -448,22 +721,6 @@ export default function App() {
       revokeBookUrls(books);
     };
   }, [books]);
-
-  const selectedBook = useMemo(
-    () => books.find((book) => book.id === selectedBookId) || books[0] || null,
-    [books, selectedBookId]
-  );
-
-  useEffect(() => {
-    if (selectedBook && selectedBook.id !== selectedBookId) {
-      setSelectedBookId(selectedBook.id);
-    }
-  }, [selectedBook, selectedBookId]);
-
-  const sortedSongs = useMemo(() => {
-    if (!selectedBook) return [];
-    return [...selectedBook.songs].sort((a, b) => a.page - b.page || a.title.localeCompare(b.title));
-  }, [selectedBook]);
 
   function updateBook(bookId, patch) {
     setBooks((current) =>
@@ -479,10 +736,7 @@ export default function App() {
       const files = await pickFolderFiles();
       const newBooks = await booksFromFiles(files);
       setBooks((current) => [...current, ...newBooks]);
-      if (newBooks[0]) {
-        setSelectedBookId(newBooks[0].id);
-        setCurrentPage(1);
-      }
+      if (newBooks[0]) navigate(`/books/${newBooks[0].id}`);
     } catch (error) {
       alert(error.message || 'Unable to load folder.');
     }
@@ -494,10 +748,7 @@ export default function App() {
     try {
       const newBooks = await booksFromFiles(files);
       setBooks((current) => [...current, ...newBooks]);
-      if (newBooks[0]) {
-        setSelectedBookId(newBooks[0].id);
-        setCurrentPage(1);
-      }
+      if (newBooks[0]) navigate(`/books/${newBooks[0].id}`);
     } catch (error) {
       alert(error.message || 'Unable to read PDF files.');
     }
@@ -544,172 +795,39 @@ export default function App() {
     await clearPdfFiles();
     revokeBookUrls(previousBooks);
     setBooks(imported);
-    setSelectedBookId(imported[0]?.id || null);
-    setCurrentPage(1);
+    navigate(imported[0] ? `/books/${imported[0].id}` : '/');
   }
 
   async function handleClear() {
     revokeBookUrls(books);
     await clearPdfFiles();
     setBooks([]);
-    setSelectedBookId(null);
-    setCurrentPage(1);
+    navigate('/');
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div>
-          <h1>Song Book Library</h1>
-          <p>
-            Load PDF song books, review the detected song index, and tap a song name to jump to its page.
-          </p>
-        </div>
-        <div className="toolbar wrap">
-          <button className="primary-btn" onClick={handleAddFolder}>
-            Add folder
-          </button>
-          <button className="secondary-btn" onClick={() => fileInputRef.current?.click()}>
-            Add PDF files
-          </button>
-          <button className="secondary-btn" onClick={exportCatalog} disabled={!books.length}>
-            Export catalog
-          </button>
-          <label className="secondary-btn file-label">
-            Import catalog
-            <input
-              type="file"
-              accept="application/json"
-              hidden
-              onChange={(e) => e.target.files?.[0] && importCatalog(e.target.files[0])}
-            />
-          </label>
-          <button className="ghost-btn danger" onClick={handleClear} disabled={!books.length}>
-            Clear
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf"
-            multiple
-            hidden
-            onChange={(e) => handleFilesChosen(e.target.files)}
-          />
-        </div>
-      </header>
+    <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
+      <AppHeader
+        fileInputRef={fileInputRef}
+        books={books}
+        onAddFolder={handleAddFolder}
+        onExportCatalog={exportCatalog}
+        onImportCatalog={importCatalog}
+        onFilesChosen={handleFilesChosen}
+        onClear={handleClear}
+      />
+      <SectionNotice />
+      <MobileTabs books={books} />
 
-      <div className="notice-card">
-        On Android Chrome and desktop Chromium browsers, <strong>Add folder</strong> can open a local directory. On browsers without folder access,
-        use <strong>Add PDF files</strong>. The app can suggest songs from an index page, but you can correct titles and page numbers manually.
-      </div>
-
-      <main className="main-grid">
-        <section className="panel">
-          <div className="panel-header">Books</div>
-          <div className="panel-body list-panel">
-            {isRestoringFiles ? (
-              <div className="empty-panel">Restoring saved PDFs…</div>
-            ) : books.length === 0 ? (
-              <div className="empty-panel">No books loaded yet.</div>
-            ) : (
-              books.map((book) => (
-                <button
-                  key={book.id}
-                  className={`list-item ${selectedBook?.id === book.id ? 'active' : ''}`}
-                  onClick={() => {
-                    setSelectedBookId(book.id);
-                    setCurrentPage(1);
-                  }}
-                >
-                  <span>{book.title}</span>
-                  <small>
-                    {book.songs.length} songs · {book.pageCount || '?'} pages
-                    {book.missingFile ? ' · relink needed' : ''}
-                  </small>
-                </button>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">Songs in selected book</div>
-          <SongEditor
-            book={selectedBook}
-            onBookChange={updateBook}
-            onOpenSong={(page) => setCurrentPage(clampPage(page, selectedBook?.pageCount))}
-          />
-          {selectedBook ? (
-            <div className="song-list-footer">
-              <div className="mini-title">Quick song list</div>
-              <div className="quick-song-list">
-                {sortedSongs.map((song) => (
-                  <button
-                    key={`${song.id}-quick`}
-                    className="quick-song-item"
-                    onClick={() => setCurrentPage(clampPage(song.page, selectedBook.pageCount))}
-                  >
-                    <span>{song.title}</span>
-                    <small>p. {song.page}</small>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </section>
-
-        <section className="panel viewer-panel">
-          <div className="panel-header viewer-controls">
-            <span>PDF page</span>
-            {selectedBook ? (
-              <div className="toolbar">
-                <button
-                  className="ghost-btn"
-                  onClick={() => setCurrentPage((page) => clampPage(page - 1, selectedBook.pageCount))}
-                >
-                  Prev
-                </button>
-                <input
-                  className="page-input"
-                  type="number"
-                  min="1"
-                  max={selectedBook.pageCount || 1}
-                  value={currentPage}
-                  onChange={(e) => setCurrentPage(clampPage(e.target.value, selectedBook.pageCount))}
-                />
-                <button
-                  className="ghost-btn"
-                  onClick={() => setCurrentPage((page) => clampPage(page + 1, selectedBook.pageCount))}
-                >
-                  Next
-                </button>
-              </div>
-            ) : null}
-          </div>
-          <div className="panel-body viewer-body">
-            {isRestoringFiles ? (
-              <div className="empty-panel">Restoring saved PDFs…</div>
-            ) : selectedBook?.missingFile ? (
-              <div className="empty-panel">
-                This catalog entry was restored without its PDF file. Re-add the PDF to open pages.
-              </div>
-            ) : (
-              <PdfViewer
-                file={selectedBook?.file}
-                url={selectedBook?.url}
-                pageNumber={currentPage}
-                pageCount={selectedBook?.pageCount}
-                onPageCount={(count) => {
-                  if (selectedBook && count !== selectedBook.pageCount) {
-                    updateBook(selectedBook.id, { pageCount: count });
-                  }
-                }}
-                title={selectedBook?.title || 'PDF viewer'}
-              />
-            )}
-          </div>
-        </section>
-      </main>
+      <Routes>
+        <Route path="/" element={<BooksPage books={books} isRestoringFiles={isRestoringFiles} />} />
+        <Route path="/books/:bookId" element={<SongListPage books={books} updateBook={updateBook} />} />
+        <Route
+          path="/books/:bookId/songs/:songId"
+          element={<SongViewerPage books={books} updateBook={updateBook} isRestoringFiles={isRestoringFiles} />}
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </div>
   );
 }

@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Avenir Next", "Inter", "Segoe UI", sans-serif;
+}
+
+html {
+  background: #ffffff;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+#root {
+  min-height: 100vh;
+}
