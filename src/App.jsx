@@ -5,6 +5,75 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const STORAGE_KEY = 'songbook-pwa-catalog-v1';
+const DB_NAME = 'songbook-pwa-files';
+const DB_VERSION = 1;
+const FILE_STORE = 'pdfs';
+
+function openPdfDb() {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(FILE_STORE)) {
+        db.createObjectStore(FILE_STORE);
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open IndexedDB.'));
+  });
+}
+
+async function withStore(mode, work) {
+  const db = await openPdfDb();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FILE_STORE, mode);
+    const store = tx.objectStore(FILE_STORE);
+
+    let settled = false;
+
+    const finish = (fn) => (value) => {
+      if (settled) return;
+      settled = true;
+      fn(value);
+    };
+
+    tx.oncomplete = () => {
+      db.close();
+    };
+    tx.onabort = finish(() => {
+      db.close();
+      reject(tx.error || new Error('IndexedDB transaction was aborted.'));
+    });
+    tx.onerror = finish(() => {
+      db.close();
+      reject(tx.error || new Error('IndexedDB transaction failed.'));
+    });
+
+    Promise.resolve(work(store, tx)).then(finish(resolve), finish(reject));
+  });
+}
+
+function requestToPromise(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('IndexedDB request failed.'));
+  });
+}
+
+async function savePdfFile(bookId, file) {
+  await withStore('readwrite', (store) => requestToPromise(store.put(file, bookId)));
+}
+
+async function loadPdfFile(bookId) {
+  return withStore('readonly', (store) => requestToPromise(store.get(bookId)));
+}
+
+async function clearPdfFiles() {
+  await withStore('readwrite', (store) => requestToPromise(store.clear()));
+}
 
 function uid(prefix = 'id') {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -108,22 +177,39 @@ function bookFromStored(book) {
   };
 }
 
+function attachFileToBook(book, file) {
+  if (!file) return bookFromStored(book);
+
+  return {
+    ...book,
+    file,
+    url: URL.createObjectURL(file),
+    missingFile: false,
+  };
+}
+
+function revokeBookUrls(books) {
+  books.forEach((book) => {
+    if (book.url) URL.revokeObjectURL(book.url);
+  });
+}
+
 async function booksFromFiles(files) {
   const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith('.pdf'));
   const books = [];
 
   for (const file of pdfFiles) {
     const { songs, pageCount } = await extractSongSuggestions(file);
-    books.push({
+    const book = {
       id: uid('book'),
       title: file.name.replace(/\.pdf$/i, ''),
       fileName: file.name,
       file,
-      url: URL.createObjectURL(file),
       pageCount,
       songs,
-      missingFile: false,
-    });
+    };
+    await savePdfFile(book.id, file);
+    books.push(attachFileToBook(book, file));
   }
 
   return books;
@@ -309,6 +395,7 @@ export default function App() {
   const [books, setBooks] = useState(() => loadCatalog().map(bookFromStored));
   const [selectedBookId, setSelectedBookId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [isRestoringFiles, setIsRestoringFiles] = useState(true);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -316,10 +403,49 @@ export default function App() {
   }, [books]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function restoreFiles() {
+      const storedBooks = loadCatalog();
+      const restored = await Promise.all(
+        storedBooks.map(async (book) => attachFileToBook(book, await loadPdfFile(book.id)))
+      );
+
+      if (!cancelled) {
+        setBooks((current) => {
+          revokeBookUrls(current);
+          return restored;
+        });
+        setIsRestoringFiles(false);
+      }
+    }
+
+    restoreFiles().catch((error) => {
+      console.error(error);
+      if (!cancelled) setIsRestoringFiles(false);
+    });
+
     return () => {
-      books.forEach((book) => {
-        if (book.url) URL.revokeObjectURL(book.url);
-      });
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const knownIds = new Set(books.map((book) => book.id));
+
+    withStore('readwrite', async (store) => {
+      const keys = await requestToPromise(store.getAllKeys());
+      await Promise.all(
+        keys.filter((key) => !knownIds.has(key)).map((key) => requestToPromise(store.delete(key)))
+      );
+    }).catch((error) => {
+      console.error(error);
+    });
+  }, [books]);
+
+  useEffect(() => {
+    return () => {
+      revokeBookUrls(books);
     };
   }, [books]);
 
@@ -400,6 +526,7 @@ export default function App() {
   async function importCatalog(file) {
     const text = await file.text();
     const parsed = JSON.parse(text);
+    const previousBooks = books;
     const imported = parsed.map((book) => ({
       id: uid('book'),
       title: book.title,
@@ -414,8 +541,18 @@ export default function App() {
       url: null,
       missingFile: true,
     }));
+    await clearPdfFiles();
+    revokeBookUrls(previousBooks);
     setBooks(imported);
     setSelectedBookId(imported[0]?.id || null);
+    setCurrentPage(1);
+  }
+
+  async function handleClear() {
+    revokeBookUrls(books);
+    await clearPdfFiles();
+    setBooks([]);
+    setSelectedBookId(null);
     setCurrentPage(1);
   }
 
@@ -447,7 +584,7 @@ export default function App() {
               onChange={(e) => e.target.files?.[0] && importCatalog(e.target.files[0])}
             />
           </label>
-          <button className="ghost-btn danger" onClick={() => setBooks([])} disabled={!books.length}>
+          <button className="ghost-btn danger" onClick={handleClear} disabled={!books.length}>
             Clear
           </button>
           <input
@@ -470,7 +607,9 @@ export default function App() {
         <section className="panel">
           <div className="panel-header">Books</div>
           <div className="panel-body list-panel">
-            {books.length === 0 ? (
+            {isRestoringFiles ? (
+              <div className="empty-panel">Restoring saved PDFs…</div>
+            ) : books.length === 0 ? (
               <div className="empty-panel">No books loaded yet.</div>
             ) : (
               books.map((book) => (
@@ -548,9 +687,11 @@ export default function App() {
             ) : null}
           </div>
           <div className="panel-body viewer-body">
-            {selectedBook?.missingFile ? (
+            {isRestoringFiles ? (
+              <div className="empty-panel">Restoring saved PDFs…</div>
+            ) : selectedBook?.missingFile ? (
               <div className="empty-panel">
-                This catalog entry was restored without its PDF file. Re-add the PDF from local storage to open pages.
+                This catalog entry was restored without its PDF file. Re-add the PDF to open pages.
               </div>
             ) : (
               <PdfViewer
