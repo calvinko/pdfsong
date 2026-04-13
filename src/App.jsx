@@ -180,9 +180,10 @@ async function fileToPdfDoc(file) {
 }
 
 async function apiRequest(path, options = {}) {
+  const defaultHeaders = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
-      'Content-Type': 'application/json',
+      ...defaultHeaders,
       ...(options.headers || {}),
     },
     ...options,
@@ -196,6 +197,115 @@ async function apiRequest(path, options = {}) {
   }
 
   return payload;
+}
+
+function getAuthToken(authSession) {
+  return (
+    authSession?.token ||
+    authSession?.accessToken ||
+    authSession?.jwt ||
+    authSession?.sessionToken ||
+    authSession?.user?.token ||
+    ''
+  );
+}
+
+async function apiAuthedRequest(path, authSession, options = {}) {
+  const token = getAuthToken(authSession);
+
+  return apiRequest(path, {
+    ...options,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
+  });
+}
+
+function normalizeSongPage(value, fallback) {
+  const candidates = [value, fallback];
+
+  for (const candidate of candidates) {
+    const page = Number(candidate);
+    if (Number.isFinite(page) && page > 0) {
+      return Math.round(page);
+    }
+  }
+
+  return 1;
+}
+
+function normalizeRemoteIndex(payload) {
+  const rawSongs =
+    payload?.songs ||
+    payload?.index ||
+    payload?.items ||
+    payload?.results ||
+    payload?.data?.songs ||
+    payload?.data?.index ||
+    payload?.data ||
+    [];
+
+  const list = Array.isArray(rawSongs) ? rawSongs : [];
+  const seen = new Set();
+
+  const songs = list
+    .map((entry, index) => {
+      if (!entry || typeof entry !== 'object') return null;
+
+      const title =
+        entry.title ||
+        entry.name ||
+        entry.songTitle ||
+        entry.song ||
+        entry.label ||
+        '';
+      const trimmedTitle = String(title).trim();
+      if (!trimmedTitle) return null;
+
+      const page = normalizeSongPage(
+        entry.page ?? entry.pageNo ?? entry.pageNumber ?? entry.page_num ?? entry.pdfPage ?? entry.number,
+        index + 1
+      );
+
+      const dedupeKey = `${trimmedTitle.toLowerCase()}::${page}`;
+      if (seen.has(dedupeKey)) return null;
+      seen.add(dedupeKey);
+
+      return {
+        id: uid('song'),
+        title: trimmedTitle,
+        page,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    songs,
+    pageCount: Number(payload?.pageCount ?? payload?.numPages ?? payload?.pages ?? payload?.data?.pageCount) || null,
+  };
+}
+
+async function fetchBookIndex(book, authSession) {
+  if (!book.file) {
+    throw new Error('This book needs its PDF file before the remote index can be generated.');
+  }
+
+  const formData = new FormData();
+  formData.append('pdf', book.file, book.fileName || book.file.name || `${book.title}.pdf`);
+
+  const payload = await apiAuthedRequest('/api/songpdf/getindex', authSession, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const normalized = normalizeRemoteIndex(payload);
+
+  if (!normalized.songs.length) {
+    throw new Error('The getindex API returned no songs for this book.');
+  }
+
+  return normalized;
 }
 
 async function extractSongSuggestions(file) {
@@ -544,6 +654,7 @@ function ManagePage({
   onAuthSuccess,
   onLogout,
   updateBook,
+  onGetIndex,
 }) {
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({
@@ -746,11 +857,32 @@ function ManagePage({
                     >
                       Add song
                     </button>
+                    <button
+                      className={secondaryButtonClass}
+                      onClick={() => onGetIndex(book)}
+                      disabled={book.indexLoading || book.missingFile}
+                    >
+                      {book.indexLoading ? 'Loading index…' : 'Get index'}
+                    </button>
                     <Link to={`/books/${book.id}`} className={secondaryButtonClass}>
                       Open songs
                     </Link>
                   </div>
                 </div>
+                {book.indexError ? (
+                  <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {book.indexError}
+                  </div>
+                ) : book.missingFile ? (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    Re-add the PDF file before requesting the remote index.
+                  </div>
+                ) : null}
+                {book.indexSuccess ? (
+                  <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    {book.indexSuccess}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -1102,6 +1234,31 @@ export default function App() {
     setAuthSession(null);
   }
 
+  async function handleGetIndex(book) {
+    updateBook(book.id, {
+      indexLoading: true,
+      indexError: '',
+      indexSuccess: '',
+    });
+
+    try {
+      const { songs, pageCount } = await fetchBookIndex(book, authSession);
+      updateBook(book.id, {
+        songs,
+        pageCount: pageCount || book.pageCount,
+        indexLoading: false,
+        indexError: '',
+        indexSuccess: `Loaded ${songs.length} song${songs.length === 1 ? '' : 's'} from the remote index.`,
+      });
+    } catch (error) {
+      updateBook(book.id, {
+        indexLoading: false,
+        indexError: error.message || 'Unable to load the remote index for this book.',
+        indexSuccess: '',
+      });
+    }
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
       <AppHeader />
@@ -1128,6 +1285,7 @@ export default function App() {
               onAuthSuccess={handleAuthSuccess}
               onLogout={handleLogout}
               updateBook={updateBook}
+              onGetIndex={handleGetIndex}
             />
           }
         />
