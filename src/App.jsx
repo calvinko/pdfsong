@@ -19,7 +19,7 @@ const AUTH_STORAGE_KEY = 'songbook-pwa-auth-v1';
 const DB_NAME = 'songbook-pwa-files';
 const DB_VERSION = 1;
 const FILE_STORE = 'pdfs';
-const API_BASE_URL = 'https://biblecircle.org/app';
+const API_BASE_URL = 'https://biblecircle.org/kapi';
 
 const panelClass = 'rounded-2xl border border-slate-200 bg-white shadow-sm';
 const panelHeaderClass = 'border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900';
@@ -294,7 +294,7 @@ async function fetchBookIndex(book, authSession) {
   const formData = new FormData();
   formData.append('pdf', book.file, book.fileName || book.file.name || `${book.title}.pdf`);
 
-  const payload = await apiAuthedRequest('/api/songpdf/getindex', authSession, {
+  const payload = await apiAuthedRequest('/songpdf/getindex', authSession, {
     method: 'POST',
     body: formData,
   });
@@ -685,7 +685,7 @@ function ManagePage({
               password: authForm.password,
             };
 
-      const session = await apiRequest(`/api/auth/${authMode}`, {
+      const session = await apiRequest(`/auth/${authMode}`, {
         method: 'POST',
         body: JSON.stringify(payload),
       });

@@ -31,11 +31,16 @@ router.post('/getindex', upload.single('pdf'), async (req, res) => {
       });
     }
 
-    const result = await extractSongbookIndexFromPdf({
+    //const result = await extractSongbookIndexFromPdf({
+    //  filePath: req.file.path,
+    //  filename: req.file.originalname || 'songbook.pdf',
+    //  saveOutput: false
+    //});
+
+    const result = {
       filePath: req.file.path,
-      filename: req.file.originalname || 'songbook.pdf',
-      saveOutput: false
-    });
+      filename: req.file.originalname    
+    }
 
     res.json({
       ...result,

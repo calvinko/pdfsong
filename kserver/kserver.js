@@ -59,9 +59,9 @@ app.use(
   '/api/auth',
   createAuthRouter({ pool })
 );
-app.use('/api/songpdf', songPdfRouter);
+app.use('/songpdf', songPdfRouter);
 
-app.get('/api/health', async (_req, res) => {
+app.get('/health', async (_req, res) => {
   try {
     const [rows] = await pool.query('SELECT 1 AS ok');
     res.json({ ok: rows[0].ok === 1 });
