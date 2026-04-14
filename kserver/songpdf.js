@@ -64,11 +64,17 @@ router.post('/analyze', upload.single('pdf'), async (req, res) => {
     }
 
     const handle = randomUUID();
+    const originalFilename = path.basename(req.file.originalname || 'songbook.pdf');
+    const analysisFilename = `${handle}-${originalFilename}`;
+    const analysisPath = path.join(path.dirname(req.file.path), analysisFilename);
+
+    await fs.copyFile(req.file.path, analysisPath);
+
     const record = {
       handle,
-      path: req.file.path,
-      filename: req.file.filename,
-      originalFilename: req.file.originalname || 'songbook.pdf',
+      path: analysisPath,
+      filename: analysisFilename,
+      originalFilename,
       status: 'queued'
     };
 
@@ -76,8 +82,8 @@ router.post('/analyze', upload.single('pdf'), async (req, res) => {
 
     extractSongbookIndexFromPdf({
       handle,
-      filePath: req.file.path,
-      filename: req.file.originalname || 'songbook.pdf',
+      filePath: analysisPath,
+      filename: originalFilename,
       saveOutput: false
     }).catch((error) => {
       console.error(`Song PDF analyze background job failed for ${handle}:`, error);
