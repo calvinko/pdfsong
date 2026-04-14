@@ -244,8 +244,13 @@ async function fetchAnalysisStatus(book, authSession) {
     throw new Error('Run Analyze first so this book has an analysis handle.');
   }
 
-  const query = new URLSearchParams({ handle: book.analysisHandle });
-  return apiAuthedRequest(`/songpdf/getstatus?${query.toString()}`, authSession);
+  const query = new URLSearchParams({
+    handle: book.analysisHandle,
+    _: `${Date.now()}`
+  });
+  return apiAuthedRequest(`/songpdf/getstatus?${query.toString()}`, authSession, {
+    cache: 'no-store'
+  });
 }
 
 async function extractSongSuggestions(file) {

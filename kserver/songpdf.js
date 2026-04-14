@@ -103,6 +103,11 @@ router.post('/analyze', upload.single('pdf'), async (req, res) => {
 });
 
 router.get('/getstatus', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+
   const handle = typeof req.query.handle === 'string' ? req.query.handle.trim() : '';
 
   if (!handle) {
