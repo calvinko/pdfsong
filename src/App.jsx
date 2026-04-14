@@ -253,6 +253,74 @@ async function fetchAnalysisStatus(book, authSession) {
   });
 }
 
+async function resolveOutlinePage(pdf, dest) {
+  if (!dest) {
+    return null;
+  }
+
+  const resolvedDest = typeof dest === 'string' ? await pdf.getDestination(dest) : dest;
+  if (!Array.isArray(resolvedDest) || resolvedDest.length === 0) {
+    return null;
+  }
+
+  const target = resolvedDest[0];
+
+  if (typeof target === 'number' && Number.isFinite(target)) {
+    return target + 1;
+  }
+
+  if (target && typeof target === 'object' && 'num' in target) {
+    const pageIndex = await pdf.getPageIndex(target);
+    return pageIndex + 1;
+  }
+
+  return null;
+}
+
+async function extractSongIndex(file) {
+  const pdf = await fileToPdfDoc(file);
+  const outline = await pdf.getOutline();
+
+  if (!Array.isArray(outline) || outline.length === 0) {
+    return {
+      pageCount: pdf.numPages,
+      songs: []
+    };
+  }
+
+  const songs = [];
+
+  async function visit(items) {
+    for (const item of items) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+
+      const title = String(item.title || '').replace(/\s+/g, ' ').trim();
+      const page = await resolveOutlinePage(pdf, item.dest);
+
+      if (title && Number.isFinite(page) && page > 0) {
+        songs.push({
+          id: uid('song'),
+          title,
+          page: Math.round(page)
+        });
+      }
+
+      if (Array.isArray(item.items) && item.items.length > 0) {
+        await visit(item.items);
+      }
+    }
+  }
+
+  await visit(outline);
+
+  return {
+    pageCount: pdf.numPages,
+    songs
+  };
+}
+
 function normalizeAnalyzedSongs(payload) {
   const rawSongs = payload?.result?.data?.songs;
   if (!Array.isArray(rawSongs)) {
@@ -275,63 +343,6 @@ function normalizeAnalyzedSongs(payload) {
       };
     })
     .filter(Boolean);
-}
-
-async function extractSongSuggestions(file) {
-  const pdf = await fileToPdfDoc(file);
-  const textPages = [];
-  const maxPages = Math.min(pdf.numPages, 8);
-
-  for (let pageNo = 1; pageNo <= maxPages; pageNo += 1) {
-    const page = await pdf.getPage(pageNo);
-    const content = await page.getTextContent();
-    const lines = content.items
-      .map((item) => item.str)
-      .join('\n')
-      .split(/\n+/)
-      .map((line) => line.replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
-    textPages.push(...lines);
-  }
-
-  const patterns = [
-    /^(\d{1,3})[.)\-\s]+(.+?)\s+(\d{1,4})$/,
-    /^(.+?)\.{2,}\s*(\d{1,4})$/,
-    /^(.+?)\s+(\d{1,4})$/,
-  ];
-
-  const results = [];
-  const seen = new Set();
-
-  for (const line of textPages) {
-    for (const pattern of patterns) {
-      const match = line.match(pattern);
-      if (!match) continue;
-
-      let title;
-      let page;
-      if (match.length === 4) {
-        title = match[2]?.trim();
-        page = Number(match[3]);
-      } else {
-        title = match[1]?.trim();
-        page = Number(match[2]);
-      }
-
-      if (!title || !Number.isFinite(page) || page <= 0) continue;
-      if (title.length < 2 || /^page\s*\d+$/i.test(title)) continue;
-      const key = `${title.toLowerCase()}::${page}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      results.push({ id: uid('song'), title, page });
-      break;
-    }
-  }
-
-  return {
-    pageCount: pdf.numPages,
-    songs: results.slice(0, 300),
-  };
 }
 
 function bookFromStored(book) {
@@ -368,7 +379,7 @@ async function booksFromFiles(files) {
   const books = [];
 
   for (const file of pdfFiles) {
-    const { songs, pageCount } = await extractSongSuggestions(file);
+    const { songs, pageCount } = await extractSongIndex(file);
     const book = {
       id: uid('book'),
       title: file.name.replace(/\.pdf$/i, ''),
@@ -605,6 +616,28 @@ function BookSongEditor({ book, updateBook }) {
   );
 }
 
+function BookSongIndexList({ book }) {
+  return (
+    <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+      {book.songs.length === 0 ? (
+        <div className={emptyPanelClass}>No songs found in the index yet.</div>
+      ) : (
+        <div className="flex flex-col divide-y divide-slate-200">
+          {book.songs
+            .slice()
+            .sort((a, b) => a.page - b.page || a.title.localeCompare(b.title))
+            .map((song) => (
+              <div key={song.id} className="flex items-baseline justify-between gap-3 py-2 text-sm">
+                <span className="min-w-0 truncate font-medium text-slate-900">{song.title}</span>
+                <span className="shrink-0 text-xs text-slate-500">p. {song.page}</span>
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SongListPage({ books }) {
   const { bookId } = useParams();
   const book = books.find((entry) => entry.id === bookId);
@@ -673,6 +706,32 @@ function ManagePage({
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [collapsedBooks, setCollapsedBooks] = useState({});
+  const [editingBooks, setEditingBooks] = useState({});
+
+  useEffect(() => {
+    setCollapsedBooks((current) => {
+      const next = {};
+
+      books.forEach((book) => {
+        next[book.id] = current[book.id] ?? false;
+      });
+
+      return next;
+    });
+  }, [books]);
+
+  useEffect(() => {
+    setEditingBooks((current) => {
+      const next = {};
+
+      books.forEach((book) => {
+        next[book.id] = current[book.id] ?? false;
+      });
+
+      return next;
+    });
+  }, [books]);
 
   async function handleAuthSubmit(event) {
     event.preventDefault();
@@ -802,6 +861,8 @@ function ManagePage({
         )}
       </PageFrame>
 
+      <SectionNotice />
+
       <PageFrame title="Manage Library" subtitle="Import, export, add books, and add songs from one place">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <button className={primaryButtonClass} onClick={onAddFolder}>
@@ -847,14 +908,43 @@ function ManagePage({
           <div className="flex flex-col gap-3">
             {books.map((book) => (
               <div key={book.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold text-slate-900">{book.title}</div>
                     <div className="mt-1 text-xs text-slate-500">
                       {book.songs.length} songs · {book.pageCount || '?'} pages
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="inline-flex h-7 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                      onClick={() =>
+                        setEditingBooks((current) => ({
+                          ...current,
+                          [book.id]: !current[book.id]
+                        }))
+                      }
+                    >
+                      {editingBooks[book.id] ? 'Done' : 'Edit'}
+                    </button>
+                    <button
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                      onClick={() =>
+                        setCollapsedBooks((current) => ({
+                          ...current,
+                          [book.id]: !current[book.id]
+                        }))
+                      }
+                      aria-label={collapsedBooks[book.id] ? `Expand ${book.title}` : `Collapse ${book.title}`}
+                      title={collapsedBooks[book.id] ? 'Expand' : 'Collapse'}
+                    >
+                      {collapsedBooks[book.id] ? '▸' : '▾'}
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                    {editingBooks[book.id] ? (
+                      <>
                     <button
                       className={secondaryButtonClass}
                       onClick={() =>
@@ -879,7 +969,8 @@ function ManagePage({
                     >
                       {book.statusLoading ? 'Checking status…' : 'Get status'}
                     </button>
-                  </div>
+                      </>
+                    ) : null}
                 </div>
                 {book.analysisError ? (
                   <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -901,7 +992,11 @@ function ManagePage({
                     {book.analysisStatus ? ` · Status: ${book.analysisStatus}` : ''}
                   </div>
                 ) : null}
-                <BookSongEditor book={book} updateBook={updateBook} />
+                {collapsedBooks[book.id]
+                  ? null
+                  : editingBooks[book.id]
+                    ? <BookSongEditor book={book} updateBook={updateBook} />
+                    : <BookSongIndexList book={book} />}
               </div>
             ))}
           </div>
@@ -1274,7 +1369,6 @@ export default function App() {
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
       <AppHeader />
-      <SectionNotice />
 
       <Routes>
         <Route path="/" element={<BooksPage books={books} isRestoringFiles={isRestoringFiles} />} />
