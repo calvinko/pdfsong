@@ -143,6 +143,7 @@ function saveCatalog(books) {
   const lightweight = books.map((book) => ({
     id: book.id,
     title: book.title,
+    internalTitle: book.internalTitle || '',
     fileName: book.fileName,
     pageCount: book.pageCount,
     songs: book.songs,
@@ -283,10 +284,20 @@ async function resolveOutlinePage(pdf, dest) {
 
 async function extractSongIndex(file) {
   const pdf = await fileToPdfDoc(file);
+  const metadata = await pdf.getMetadata().catch(() => null);
   const outline = await pdf.getOutline();
+  const documentTitle =
+    String(
+      metadata?.info?.Title ||
+      metadata?.metadata?.get?.('dc:title') ||
+      ''
+    )
+      .replace(/\s+/g, ' ')
+      .trim() || null;
 
   if (!Array.isArray(outline) || outline.length === 0) {
     return {
+      title: documentTitle, 
       pageCount: pdf.numPages,
       songs: []
     };
@@ -320,6 +331,7 @@ async function extractSongIndex(file) {
   await visit(outline);
 
   return {
+    title: documentTitle,
     pageCount: pdf.numPages,
     songs
   };
@@ -355,6 +367,7 @@ function bookFromStored(book) {
     file: null,
     url: null,
     missingFile: true,
+    internalTitle: book.internalTitle || '',
     analysisHandle: book.analysisHandle || '',
     analysisStatus: book.analysisStatus || '',
     analysisFilename: book.analysisFilename || '',
@@ -378,9 +391,42 @@ function revokeBookUrls(books) {
   });
 }
 
-async function booksFromFiles(files, onProgress) {
+function normalizeBookKey(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/\.pdf$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function getBookKeys(values) {
+  const keys = new Set();
+
+  values.forEach((value) => {
+    const normalized = normalizeBookKey(value);
+    if (!normalized) return;
+
+    keys.add(normalized);
+    keys.add(normalized.replace(/\s+/g, ''));
+  });
+
+  return keys;
+}
+
+async function booksFromFiles(files, existingBooks = [], onProgress, options = {}) {
   const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith('.pdf'));
   const books = [];
+  const knownBookKeys = new Set();
+  const allowDuplicates = options.allowDuplicates === true;
+
+  existingBooks.forEach((book) => {
+    getBookKeys([book.fileName, book.title, book.internalTitle]).forEach((key) => {
+      knownBookKeys.add(key);
+    });
+  });
 
   onProgress?.({
     total: pdfFiles.length,
@@ -389,11 +435,35 @@ async function booksFromFiles(files, onProgress) {
     items: pdfFiles.map((file) => ({
       id: uid('import'),
       name: file.name,
-      state: 'queued'
+      state: 'queued',
+      file
     }))
   });
 
   for (const file of pdfFiles) {
+    const filenameTitle = file.name.replace(/\.pdf$/i, '');
+    const fileKeys = getBookKeys([file.name, filenameTitle]);
+
+    if (!allowDuplicates && [...fileKeys].some((key) => knownBookKeys.has(key))) {
+      onProgress?.((current) => ({
+        ...current,
+        processed: current.processed + 1,
+        currentFile: file.name,
+        items: current.items.map((item) =>
+          item.name === file.name
+            ? {
+                ...item,
+                state: 'skipped',
+                metadata: {
+                  reason: 'Duplicate book already exists in the library.'
+                }
+              }
+            : item
+        )
+      }));
+      continue;
+    }
+
     onProgress?.((current) => ({
       ...current,
       currentFile: file.name,
@@ -403,10 +473,33 @@ async function booksFromFiles(files, onProgress) {
     }));
 
     try {
-      const { songs, pageCount } = await extractSongIndex(file);
+      const { title, songs, pageCount } = await extractSongIndex(file);
+      const extractedKeys = getBookKeys([file.name, filenameTitle, title]);
+
+      if (!allowDuplicates && [...extractedKeys].some((key) => knownBookKeys.has(key))) {
+        onProgress?.((current) => ({
+          ...current,
+          processed: current.processed + 1,
+          items: current.items.map((item) =>
+            item.name === file.name
+              ? {
+                  ...item,
+                  state: 'skipped',
+                  metadata: {
+                    internalTitle: title || '',
+                    reason: 'Duplicate internal title already exists in the library.'
+                  }
+                }
+              : item
+          )
+        }));
+        continue;
+      }
+
       const book = {
         id: uid('book'),
-        title: file.name.replace(/\.pdf$/i, ''),
+        title: filenameTitle,
+        internalTitle: title || '',
         fileName: file.name,
         file,
         pageCount,
@@ -417,12 +510,25 @@ async function booksFromFiles(files, onProgress) {
       };
       await savePdfFile(book.id, file);
       books.push(attachFileToBook(book, file));
+      getBookKeys([book.fileName, book.title, book.internalTitle]).forEach((key) => {
+        knownBookKeys.add(key);
+      });
 
       onProgress?.((current) => ({
         ...current,
         processed: current.processed + 1,
         items: current.items.map((item) =>
-          item.name === file.name ? { ...item, state: 'done' } : item
+          item.name === file.name
+            ? {
+                ...item,
+                state: 'done',
+                metadata: {
+                  internalTitle: title || '',
+                  pageCount,
+                  songCount: songs.length
+                }
+              }
+            : item
         )
       }));
     } catch (error) {
@@ -511,7 +617,7 @@ function SectionNotice() {
   );
 }
 
-function ImportStatusPane({ status, onDismiss }) {
+function ImportStatusPane({ status, onDismiss, onImportAnyway }) {
   if (!status?.visible) return null;
 
   const total = Number(status.total) || 0;
@@ -541,10 +647,41 @@ function ImportStatusPane({ status, onDismiss }) {
           <div className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-slate-50 p-3">
             {status.items.map((item) => (
               <div key={item.id} className="flex items-start justify-between gap-3 text-sm">
-                <span className="min-w-0 truncate text-slate-700">{item.name}</span>
-                <span className={item.state === 'error' ? 'shrink-0 text-rose-600' : 'shrink-0 text-slate-500'}>
+                <div className="min-w-0">
+                  <div className="truncate text-slate-700">{item.name}</div>
+                  {item.metadata?.internalTitle ? (
+                    <div className="truncate text-xs text-slate-500">Internal title: {item.metadata.internalTitle}</div>
+                  ) : null}
+                  {item.metadata?.pageCount || item.metadata?.songCount ? (
+                    <div className="text-xs text-slate-500">
+                      {item.metadata?.pageCount ? `${item.metadata.pageCount} pages` : ''}
+                      {item.metadata?.pageCount && item.metadata?.songCount ? ' · ' : ''}
+                      {item.metadata?.songCount ? `${item.metadata.songCount} songs` : ''}
+                    </div>
+                  ) : null}
+                  {item.metadata?.reason ? (
+                    <div className="text-xs text-slate-500">{item.metadata.reason}</div>
+                  ) : null}
+                </div>
+                <span
+                  className={
+                    item.state === 'error'
+                      ? 'shrink-0 text-rose-600'
+                      : item.state === 'skipped'
+                        ? 'shrink-0 text-amber-600'
+                        : 'shrink-0 text-slate-500'
+                  }
+                >
                   {item.state}
                 </span>
+                {item.state === 'skipped' && item.file ? (
+                  <button
+                    className={`${secondaryButtonClass} shrink-0 px-3 py-1 text-xs`}
+                    onClick={() => onImportAnyway(item)}
+                  >
+                    Import anyway
+                  </button>
+                ) : null}
               </div>
             ))}
           </div>
@@ -952,10 +1089,10 @@ function ManagePage({
       <PageFrame title="Manage Library" subtitle="Import, export, add books, and add songs from one place">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <button className={primaryButtonClass} onClick={onAddFolder}>
-            Add folder
+            Import from Folder
           </button>
           <button className={secondaryButtonClass} onClick={() => fileInputRef.current?.click()}>
-            Add PDF files
+            Import Songbooks
           </button>
           <button className={secondaryButtonClass} onClick={onExportCatalog} disabled={!books.length}>
             Export catalog
@@ -985,7 +1122,29 @@ function ManagePage({
         />
       </PageFrame>
 
-      <PageFrame title="Books" subtitle="Add a song directly into any book">
+      <PageFrame
+        title="Books"
+        subtitle="Add a song directly into any book"
+        footer={
+          books.length ? (
+            <div className="flex justify-end">
+              <button
+                className={secondaryButtonClass}
+                onClick={() =>
+                  setCollapsedBooks(
+                    books.reduce((next, book) => {
+                      next[book.id] = true;
+                      return next;
+                    }, {})
+                  )
+                }
+              >
+                Collapse all
+              </button>
+            </div>
+          ) : null
+        }
+      >
         {isRestoringFiles ? (
           <div className={emptyPanelClass}>Restoring saved PDFs…</div>
         ) : books.length === 0 ? (
@@ -1329,7 +1488,8 @@ export default function App() {
         currentFile: '',
         items: []
       });
-      const newBooks = await booksFromFiles(files, (next) => {
+      navigate('/');
+      const newBooks = await booksFromFiles(files, books, (next) => {
         setImportStatus((current) => {
           const value = typeof next === 'function' ? next(current) : next;
           return {
@@ -1368,7 +1528,8 @@ export default function App() {
         currentFile: '',
         items: []
       });
-      const newBooks = await booksFromFiles(files, (next) => {
+      navigate('/');
+      const newBooks = await booksFromFiles(files, books, (next) => {
         setImportStatus((current) => {
           const value = typeof next === 'function' ? next(current) : next;
           return {
@@ -1395,10 +1556,52 @@ export default function App() {
     }
   }
 
+  async function handleImportAnyway(item) {
+    if (!item?.file) return;
+
+    setImportStatus({
+      visible: true,
+      message: 'Importing duplicate book…',
+      total: 0,
+      processed: 0,
+      currentFile: '',
+      items: []
+    });
+    navigate('/');
+
+    try {
+      const newBooks = await booksFromFiles([item.file], books, (next) => {
+        setImportStatus((current) => {
+          const value = typeof next === 'function' ? next(current) : next;
+          return {
+            visible: true,
+            message: `Importing song PDFs${value.total ? ` (${value.processed}/${value.total})` : ''}…`,
+            ...value
+          };
+        });
+      }, { allowDuplicates: true });
+
+      setBooks((current) => [...current, ...newBooks]);
+      setImportStatus((current) => ({
+        ...current,
+        visible: true,
+        currentFile: '',
+        message: `Import finished. Added ${newBooks.length} book${newBooks.length === 1 ? '' : 's'}.`
+      }));
+    } catch (error) {
+      setImportStatus((current) => ({
+        ...current,
+        visible: true,
+        message: error.message || 'Unable to import duplicate book.'
+      }));
+    }
+  }
+
   function exportCatalog() {
     const content = JSON.stringify(
       books.map((book) => ({
         title: book.title,
+        internalTitle: book.internalTitle || '',
         fileName: book.fileName,
         pageCount: book.pageCount,
         songs: book.songs,
@@ -1425,6 +1628,7 @@ export default function App() {
     const imported = parsed.map((book) => ({
       id: uid('book'),
       title: book.title,
+      internalTitle: book.internalTitle || '',
       fileName: book.fileName,
       pageCount: book.pageCount,
       songs: (book.songs || []).map((song) => ({
@@ -1541,6 +1745,7 @@ export default function App() {
           setImportStatus((current) => ({ ...current, visible: false }));
           navigate('/');
         }}
+        onImportAnyway={handleImportAnyway}
       />
 
       <Routes>
