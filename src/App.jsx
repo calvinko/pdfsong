@@ -121,6 +121,10 @@ async function loadPdfFile(bookId) {
   return withStore('readonly', (store) => requestToPromise(store.get(bookId)));
 }
 
+async function deletePdfFile(bookId) {
+  await withStore('readwrite', (store) => requestToPromise(store.delete(bookId)));
+}
+
 async function clearPdfFiles() {
   await withStore('readwrite', (store) => requestToPromise(store.clear()));
 }
@@ -374,25 +378,63 @@ function revokeBookUrls(books) {
   });
 }
 
-async function booksFromFiles(files) {
+async function booksFromFiles(files, onProgress) {
   const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith('.pdf'));
   const books = [];
 
+  onProgress?.({
+    total: pdfFiles.length,
+    processed: 0,
+    currentFile: pdfFiles[0]?.name || '',
+    items: pdfFiles.map((file) => ({
+      id: uid('import'),
+      name: file.name,
+      state: 'queued'
+    }))
+  });
+
   for (const file of pdfFiles) {
-    const { songs, pageCount } = await extractSongIndex(file);
-    const book = {
-      id: uid('book'),
-      title: file.name.replace(/\.pdf$/i, ''),
-      fileName: file.name,
-      file,
-      pageCount,
-      songs,
-      analysisHandle: '',
-      analysisStatus: '',
-      analysisFilename: '',
-    };
-    await savePdfFile(book.id, file);
-    books.push(attachFileToBook(book, file));
+    onProgress?.((current) => ({
+      ...current,
+      currentFile: file.name,
+      items: current.items.map((item) =>
+        item.name === file.name && item.state === 'queued' ? { ...item, state: 'processing' } : item
+      )
+    }));
+
+    try {
+      const { songs, pageCount } = await extractSongIndex(file);
+      const book = {
+        id: uid('book'),
+        title: file.name.replace(/\.pdf$/i, ''),
+        fileName: file.name,
+        file,
+        pageCount,
+        songs,
+        analysisHandle: '',
+        analysisStatus: '',
+        analysisFilename: '',
+      };
+      await savePdfFile(book.id, file);
+      books.push(attachFileToBook(book, file));
+
+      onProgress?.((current) => ({
+        ...current,
+        processed: current.processed + 1,
+        items: current.items.map((item) =>
+          item.name === file.name ? { ...item, state: 'done' } : item
+        )
+      }));
+    } catch (error) {
+      onProgress?.((current) => ({
+        ...current,
+        processed: current.processed + 1,
+        items: current.items.map((item) =>
+          item.name === file.name ? { ...item, state: 'error' } : item
+        )
+      }));
+      throw error;
+    }
   }
 
   return books;
@@ -466,6 +508,49 @@ function SectionNotice() {
       On Android Chrome and desktop Chromium browsers, <strong>Add folder</strong> can open a local directory. On browsers without
       folder access, use <strong>Add PDF files</strong>. PDFs are cached in IndexedDB after the first import.
     </div>
+  );
+}
+
+function ImportStatusPane({ status, onDismiss }) {
+  if (!status?.visible) return null;
+
+  const total = Number(status.total) || 0;
+  const processed = Number(status.processed) || 0;
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+
+  return (
+    <section className={`${panelClass} mb-4 overflow-hidden`}>
+      <div className={panelHeaderClass}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="truncate text-base font-semibold text-slate-900">Import Status</div>
+          <button className={secondaryButtonClass} onClick={onDismiss}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+      <div className={`${panelBodyClass} flex flex-col gap-3`}>
+        <div className="text-sm text-slate-700">{status.message}</div>
+        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+          <div className="h-full rounded-full bg-sky-600 transition-all" style={{ width: `${percent}%` }} />
+        </div>
+        <div className="text-xs text-slate-500">
+          {processed} of {total} processed
+        </div>
+        {status.currentFile ? <div className="text-sm text-slate-600">Current file: {status.currentFile}</div> : null}
+        {Array.isArray(status.items) && status.items.length ? (
+          <div className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            {status.items.map((item) => (
+              <div key={item.id} className="flex items-start justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate text-slate-700">{item.name}</span>
+                <span className={item.state === 'error' ? 'shrink-0 text-rose-600' : 'shrink-0 text-slate-500'}>
+                  {item.state}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -691,6 +776,7 @@ function ManagePage({
   onExportCatalog,
   onImportCatalog,
   onClear,
+  onDeleteBook,
   onAuthSuccess,
   onLogout,
   updateBook,
@@ -917,6 +1003,12 @@ function ManagePage({
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      className="inline-flex h-7 items-center justify-center rounded-md border border-rose-300 bg-white px-2.5 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
+                      onClick={() => onDeleteBook(book)}
+                    >
+                      Delete
+                    </button>
+                    <button
                       className="inline-flex h-7 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
                       onClick={() =>
                         setEditingBooks((current) => ({
@@ -1026,7 +1118,7 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
         const page = await pdf.getPage(safePage);
         if (cancelled) return;
 
-        const viewport = page.getViewport({ scale: 1.2 });
+        const viewport = page.getViewport({ scale: 2 });
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
         const ratio = window.devicePixelRatio || 1;
@@ -1148,6 +1240,14 @@ export default function App() {
   const [books, setBooks] = useState(() => loadCatalog().map(bookFromStored));
   const [isRestoringFiles, setIsRestoringFiles] = useState(true);
   const [authSession, setAuthSession] = useState(() => loadStoredAuth());
+  const [importStatus, setImportStatus] = useState({
+    visible: false,
+    message: '',
+    total: 0,
+    processed: 0,
+    currentFile: '',
+    items: []
+  });
   const fileInputRef = useRef(null);
   const catalogInputRef = useRef(null);
   const navigate = useNavigate();
@@ -1221,11 +1321,38 @@ export default function App() {
   async function handleAddFolder() {
     try {
       const files = await pickFolderFiles();
-      const newBooks = await booksFromFiles(files);
+      setImportStatus({
+        visible: true,
+        message: 'Preparing PDF import…',
+        total: 0,
+        processed: 0,
+        currentFile: '',
+        items: []
+      });
+      const newBooks = await booksFromFiles(files, (next) => {
+        setImportStatus((current) => {
+          const value = typeof next === 'function' ? next(current) : next;
+          return {
+            visible: true,
+            message: `Importing song PDFs${value.total ? ` (${value.processed}/${value.total})` : ''}…`,
+            ...value
+          };
+        });
+      });
       setBooks((current) => [...current, ...newBooks]);
-      if (newBooks[0]) navigate(`/books/${newBooks[0].id}`);
+      setImportStatus((current) => ({
+        ...current,
+        visible: true,
+        currentFile: '',
+        message: `Import finished. Added ${newBooks.length} book${newBooks.length === 1 ? '' : 's'}.`
+      }));
+      navigate('/');
     } catch (error) {
-      alert(error.message || 'Unable to load folder.');
+      setImportStatus((current) => ({
+        ...current,
+        visible: true,
+        message: error.message || 'Unable to load folder.'
+      }));
     }
   }
 
@@ -1233,11 +1360,38 @@ export default function App() {
     const files = Array.from(fileList || []);
     if (!files.length) return;
     try {
-      const newBooks = await booksFromFiles(files);
+      setImportStatus({
+        visible: true,
+        message: 'Preparing PDF import…',
+        total: 0,
+        processed: 0,
+        currentFile: '',
+        items: []
+      });
+      const newBooks = await booksFromFiles(files, (next) => {
+        setImportStatus((current) => {
+          const value = typeof next === 'function' ? next(current) : next;
+          return {
+            visible: true,
+            message: `Importing song PDFs${value.total ? ` (${value.processed}/${value.total})` : ''}…`,
+            ...value
+          };
+        });
+      });
       setBooks((current) => [...current, ...newBooks]);
-      if (newBooks[0]) navigate(`/books/${newBooks[0].id}`);
+      setImportStatus((current) => ({
+        ...current,
+        visible: true,
+        currentFile: '',
+        message: `Import finished. Added ${newBooks.length} book${newBooks.length === 1 ? '' : 's'}.`
+      }));
+      navigate('/');
     } catch (error) {
-      alert(error.message || 'Unable to read PDF files.');
+      setImportStatus((current) => ({
+        ...current,
+        visible: true,
+        message: error.message || 'Unable to read PDF files.'
+      }));
     }
   }
 
@@ -1295,6 +1449,18 @@ export default function App() {
     revokeBookUrls(books);
     await clearPdfFiles();
     setBooks([]);
+    navigate('/');
+  }
+
+  async function handleDeleteBook(book) {
+    if (!book) return;
+
+    if (book.url) {
+      URL.revokeObjectURL(book.url);
+    }
+
+    await deletePdfFile(book.id);
+    setBooks((current) => current.filter((entry) => entry.id !== book.id));
     navigate('/');
   }
 
@@ -1369,6 +1535,13 @@ export default function App() {
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
       <AppHeader />
+      <ImportStatusPane
+        status={importStatus}
+        onDismiss={() => {
+          setImportStatus((current) => ({ ...current, visible: false }));
+          navigate('/');
+        }}
+      />
 
       <Routes>
         <Route path="/" element={<BooksPage books={books} isRestoringFiles={isRestoringFiles} />} />
@@ -1387,6 +1560,7 @@ export default function App() {
               onExportCatalog={exportCatalog}
               onImportCatalog={importCatalog}
               onClear={handleClear}
+              onDeleteBook={handleDeleteBook}
               onAuthSuccess={handleAuthSuccess}
               onLogout={handleLogout}
               updateBook={updateBook}
