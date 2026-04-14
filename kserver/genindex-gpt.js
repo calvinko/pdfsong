@@ -4,6 +4,7 @@ import path from 'node:path';
 import OpenAI from 'openai';
 import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
+import { updateAnalysisRecord } from './analysis-store.js';
 
 dotenv.config();
 
@@ -35,6 +36,7 @@ function createSafeBaseName(filename) {
 }
 
 export async function extractSongbookIndexFromPdf({
+  handle = null,
   filePath,
   filename,
   saveOutput = true
@@ -52,6 +54,17 @@ export async function extractSongbookIndexFromPdf({
   let uploadedFileId = null;
 
   try {
+    if (handle) {
+      await updateAnalysisRecord(handle, (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          status: 'processing',
+          error: null
+        };
+      });
+    }
+
     const openaiFile = await client.files.create({
       file: await fs.open(filePath, 'r').then((fh) => fh.createReadStream()),
       purpose: 'user_data'
@@ -125,6 +138,17 @@ Requirements:
       data: normalized
     };
 
+    if (handle) {
+      await updateAnalysisRecord(handle, (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          status: 'completed',
+          result
+        };
+      });
+    }
+
     if (!saveOutput) {
       return result;
     }
@@ -140,6 +164,19 @@ Requirements:
       outputPath: outPath,
       downloadUrl: `/outputs/${encodeURIComponent(outFileName)}`
     };
+  } catch (error) {
+    if (handle) {
+      await updateAnalysisRecord(handle, (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          status: 'failed',
+          error: error.message || 'Analysis failed.'
+        };
+      });
+    }
+
+    throw error;
   } finally {
     if (uploadedFileId) {
       client.files.delete(uploadedFileId).catch(() => {});

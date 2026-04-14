@@ -3,6 +3,9 @@ import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import multer from 'multer';
+import { extractSongbookIndexFromPdf } from './genindex-gpt.js';
+import { readAnalysisStore, updateAnalysisRecord } from './analysis-store.js';
+
 const router = express.Router();
 const uploadsDir = path.resolve('uploads');
 
@@ -30,16 +33,11 @@ router.post('/getindex', upload.single('pdf'), async (req, res) => {
       });
     }
 
-    //const result = await extractSongbookIndexFromPdf({
-    //  filePath: req.file.path,
-    //  filename: req.file.originalname || 'songbook.pdf',
-    //  saveOutput: false
-    //});
-
-    const result = {
+    const result = await extractSongbookIndexFromPdf({
       filePath: req.file.path,
-      filename: req.file.originalname    
-    }
+      filename: req.file.originalname || 'songbook.pdf',
+      saveOutput: false
+    });
 
     res.json({
       ...result,
@@ -65,11 +63,28 @@ router.post('/analyze', upload.single('pdf'), async (req, res) => {
       });
     }
 
-    res.json({
-      handle: randomUUID(),
+    const handle = randomUUID();
+    const record = {
+      handle,
+      path: req.file.path,
       filename: req.file.filename,
-      localFilename: req.file.filename,
       originalFilename: req.file.originalname || 'songbook.pdf',
+      status: 'queued'
+    };
+
+    await updateAnalysisRecord(handle, () => record);
+
+    extractSongbookIndexFromPdf({
+      handle,
+      filePath: req.file.path,
+      filename: req.file.originalname || 'songbook.pdf',
+      saveOutput: false
+    }).catch((error) => {
+      console.error(`Song PDF analyze background job failed for ${handle}:`, error);
+    });
+
+    res.json({
+      ...record,
       route: 'songpdf/analyze',
       placeholder: true
     });
@@ -90,23 +105,28 @@ router.get('/getstatus', async (req, res) => {
     });
   }
 
-  res.json({
-    ok: true,
-    handle,
-    status: 'queued',
-    route: 'songpdf/getstatus',
-    placeholder: true,
-    message: 'Placeholder status response. Add your background processing later.'
-  });
-});
+  try {
+    const store = await readAnalysisStore();
+    const record = store[handle];
 
-router.get('/check', async (_req, res) => {
-  res.json({
-    ok: true,
-    route: 'songpdf/check',
-    placeholder: true,
-    message: 'Placeholder endpoint for song PDF check.'
-  });
+    if (!record) {
+      return res.status(404).json({
+        error: 'Analysis handle not found.'
+      });
+    }
+
+    res.json({
+      ok: true,
+      ...record,
+      route: 'songpdf/getstatus',
+      placeholder: true
+    });
+  } catch (error) {
+    console.error('Song PDF status lookup failed:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to read analysis status.'
+    });
+  }
 });
 
 export default router;
