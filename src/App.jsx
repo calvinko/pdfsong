@@ -496,13 +496,27 @@ function BooksPage({ books, isRestoringFiles }) {
       ) : (
         <div className="flex flex-col gap-3">
           {books.map((book) => (
-            <Link key={book.id} to={`/books/${book.id}`} className={listItemClass}>
-              <div className="text-sm font-semibold text-slate-900">{book.title}</div>
-              <div className="mt-1 text-xs text-slate-500">
-                {book.songs.length} songs · {book.pageCount || '?'} pages
-                {book.missingFile ? ' · relink needed' : ''}
+            <div key={book.id} className={listItemClass}>
+              <div className="flex items-start justify-between gap-3">
+                <Link to={`/books/${book.id}`} className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-slate-900">{book.title}</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {book.songs.length} songs · {book.pageCount || '?'} pages
+                    {book.missingFile ? ' · relink needed' : ''}
+                  </div>
+                </Link>
+                {!book.missingFile && book.url ? (
+                  <a
+                    className={`${secondaryButtonClass} shrink-0 px-3 py-1.5 text-xs`}
+                    href={book.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open PDF
+                  </a>
+                ) : null}
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}
@@ -897,7 +911,7 @@ function ManagePage({
   );
 }
 
-function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, title }) {
+function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
   const canvasRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -947,20 +961,11 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, title }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1">
-        <div className="text-lg font-semibold text-slate-900">{title}</div>
-        <div className="text-sm text-slate-500">
-          Page {pageNumber} of {pageCount || '?'}
-        </div>
-      </div>
       {loading ? <div className={emptyPanelClass}>Rendering page…</div> : null}
       {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
       <div className="overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
         <canvas ref={canvasRef} className="mx-auto block h-auto max-w-full rounded-lg bg-white shadow-sm" />
       </div>
-      <a className={`${secondaryButtonClass} w-full sm:w-fit`} href={url} target="_blank" rel="noreferrer">
-        Open PDF in new tab
-      </a>
     </div>
   );
 }
@@ -1001,7 +1006,7 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
   return (
     <PageFrame
       title={song.title}
-      subtitle={`${book.title} · target page ${song.page}`}
+      subtitle={`${book.title} · target page ${song.page} · page ${currentPage} of ${book.pageCount || '?'}`}
       backTo={`/books/${book.id}`}
       backLabel="Songs"
       footer={
@@ -1038,7 +1043,6 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
               updateBook(book.id, { pageCount: count });
             }
           }}
-          title={song.title}
         />
       )}
     </PageFrame>
