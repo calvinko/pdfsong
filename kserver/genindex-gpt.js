@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import OpenAI from 'openai';
+import { toFile } from 'openai/uploads';
 import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { updateAnalysisRecord } from './analysis-store.js';
@@ -65,8 +66,14 @@ export async function extractSongbookIndexFromPdf({
       });
     }
 
+    const uploadFile = await toFile(
+      await fs.readFile(filePath),
+      filename,
+      { type: 'application/pdf' }
+    );
+
     const openaiFile = await client.files.create({
-      file: await fs.open(filePath, 'r').then((fh) => fh.createReadStream()),
+      file: uploadFile,
       purpose: 'user_data'
     });
     uploadedFileId = openaiFile.id;
