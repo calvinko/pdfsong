@@ -83,7 +83,7 @@ router.post('/analyze', upload.single('pdf'), async (req, res) => {
     extractSongbookIndexFromPdf({
       handle,
       filePath: analysisPath,
-      filename: originalFilename,
+      filename: analysisFilename,
       saveOutput: false
     }).catch((error) => {
       console.error(`Song PDF analyze background job failed for ${handle}:`, error);
