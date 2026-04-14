@@ -591,6 +591,48 @@ function BookSongEditor({ book, updateBook }) {
   );
 }
 
+function SongListPage({ books }) {
+  const { bookId } = useParams();
+  const book = books.find((entry) => entry.id === bookId);
+
+  if (!book) {
+    return (
+      <PageFrame title="Book not found" backTo="/" backLabel="Books">
+        <div className={emptyPanelClass}>This book is no longer available.</div>
+      </PageFrame>
+    );
+  }
+
+  return (
+    <PageFrame
+      title={book.title}
+      subtitle={`${book.songs.length} song${book.songs.length === 1 ? '' : 's'} · tap a title to open the PDF`}
+      backTo="/"
+      backLabel="Books"
+    >
+      {book.songs.length === 0 ? (
+        <div className={emptyPanelClass}>No songs are available for this book yet. Use Manage to add or edit songs.</div>
+      ) : (
+        <div className="flex flex-col divide-y divide-slate-200">
+          {book.songs
+            .slice()
+            .sort((a, b) => a.page - b.page || a.title.localeCompare(b.title))
+            .map((song) => (
+              <Link
+                key={song.id}
+                to={`/books/${book.id}/songs/${song.id}`}
+                className="flex items-baseline justify-between gap-3 py-2 text-sm transition hover:bg-slate-50"
+              >
+                <span className="min-w-0 truncate font-medium text-slate-900">{song.title}</span>
+                <span className="shrink-0 text-xs text-slate-500">p. {song.page}</span>
+              </Link>
+            ))}
+        </div>
+      )}
+    </PageFrame>
+  );
+}
+
 function ManagePage({
   books,
   isRestoringFiles,
@@ -1003,43 +1045,6 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
   );
 }
 
-function MobileTabs({ books }) {
-  const location = useLocation();
-  const { bookId } = useParams();
-  const onManagePage = location.pathname.startsWith('/manage');
-
-  const book = books.find((entry) => entry.id === bookId) || null;
-
-  const tabs = [
-    { label: 'Books', to: '/' },
-    { label: 'Manage', to: '/manage' },
-  ];
-
-  return (
-    <nav className="mb-4 flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-      {tabs.map((tab) => {
-        const active =
-          tab.to === '/'
-            ? location.pathname === '/'
-            : tab.to === '/manage'
-              ? onManagePage
-              : location.pathname.startsWith(tab.to);
-        return (
-          <Link
-            key={tab.label}
-            to={tab.to}
-            className={`flex-1 rounded-lg px-3 py-2 text-center text-sm font-medium ${
-              active ? 'bg-sky-50 text-sky-700' : 'text-slate-600'
-            }`}
-          >
-            {tab.label}
-          </Link>
-        );
-      })}
-    </nav>
-  );
-}
-
 export default function App() {
   const [books, setBooks] = useState(() => loadCatalog().map(bookFromStored));
   const [isRestoringFiles, setIsRestoringFiles] = useState(true);
@@ -1266,11 +1271,10 @@ export default function App() {
     <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
       <AppHeader />
       <SectionNotice />
-      <MobileTabs books={books} />
 
       <Routes>
         <Route path="/" element={<BooksPage books={books} isRestoringFiles={isRestoringFiles} />} />
-        <Route path="/books/:bookId" element={<Navigate to="/manage" replace />} />
+        <Route path="/books/:bookId" element={<SongListPage books={books} />} />
         <Route
           path="/manage"
           element={
