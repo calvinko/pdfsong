@@ -253,6 +253,30 @@ async function fetchAnalysisStatus(book, authSession) {
   });
 }
 
+function normalizeAnalyzedSongs(payload) {
+  const rawSongs = payload?.result?.data?.songs;
+  if (!Array.isArray(rawSongs)) {
+    return [];
+  }
+
+  return rawSongs
+    .map((song) => {
+      const title = String(song?.title || '').trim();
+      const page = Number(song?.page);
+
+      if (!title || !Number.isFinite(page) || page <= 0) {
+        return null;
+      }
+
+      return {
+        id: uid('song'),
+        title,
+        page: Math.round(page)
+      };
+    })
+    .filter(Boolean);
+}
+
 async function extractSongSuggestions(file) {
   const pdf = await fileToPdfDoc(file);
   const textPages = [];
@@ -486,108 +510,84 @@ function BooksPage({ books, isRestoringFiles }) {
   );
 }
 
-function SongListPage({ books, updateBook }) {
-  const { bookId } = useParams();
-  const book = books.find((entry) => entry.id === bookId);
-  const [draftTitle, setDraftTitle] = useState(book?.title || '');
-
-  useEffect(() => {
-    setDraftTitle(book?.title || '');
-  }, [book?.id, book?.title]);
-
-  if (!book) {
-    return (
-      <PageFrame title="Book not found" backTo="/" backLabel="Books">
-        <div className={emptyPanelClass}>This book is no longer available.</div>
-      </PageFrame>
-    );
-  }
-
+function BookSongEditor({ book, updateBook }) {
   return (
-    <PageFrame
-      title={book.title}
-      subtitle={`${book.songs.length} song${book.songs.length === 1 ? '' : 's'} · ${book.pageCount || '?'} pages`}
-      backTo="/"
-      backLabel="Books"
-    >
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-slate-700">Book title</label>
-          <input
-            className={inputClass}
-            value={draftTitle}
-            onChange={(e) => setDraftTitle(e.target.value)}
-            onBlur={() => updateBook(book.id, { title: draftTitle || book.title })}
-          />
-        </div>
-
-        {book.songs.length === 0 ? (
-          <div className={emptyPanelClass}>No songs found automatically. Add them manually to start building the list.</div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {book.songs
-              .slice()
-              .sort((a, b) => a.page - b.page || a.title.localeCompare(b.title))
-              .map((song, index) => (
-                <div key={song.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-3 flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium text-slate-900">{song.title}</div>
-                      <div className="text-xs text-slate-500">Song {index + 1}</div>
-                    </div>
-                    <Link
-                      to={`/books/${book.id}/songs/${song.id}`}
-                      className={`${primaryButtonClass} px-3 py-1.5 text-xs`}
-                    >
-                      Open
-                    </Link>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_92px_auto]">
-                    <input
-                      className={inputClass}
-                      value={song.title}
-                      onChange={(e) =>
-                        updateBook(book.id, {
-                          songs: book.songs.map((entry) =>
-                            entry.id === song.id ? { ...entry, title: e.target.value } : entry
-                          ),
-                        })
-                      }
-                    />
-                    <input
-                      className={`${pageInputClass} w-full`}
-                      type="number"
-                      min="1"
-                      max={book.pageCount || 1}
-                      value={song.page}
-                      onChange={(e) =>
-                        updateBook(book.id, {
-                          songs: book.songs.map((entry) =>
-                            entry.id === song.id
-                              ? { ...entry, page: clampPage(e.target.value, book.pageCount) }
-                              : entry
-                          ),
-                        })
-                      }
-                    />
-                    <button
-                      className={dangerGhostButtonClass}
-                      onClick={() =>
-                        updateBook(book.id, {
-                          songs: book.songs.filter((entry) => entry.id !== song.id),
-                        })
-                      }
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
+    <div className="mt-4 flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-slate-700">Book title</label>
+        <input
+          className={inputClass}
+          value={book.title}
+          onChange={(e) => updateBook(book.id, { title: e.target.value })}
+        />
       </div>
-    </PageFrame>
+
+      {book.songs.length === 0 ? (
+        <div className={emptyPanelClass}>No songs found automatically. Add them manually to start building the list.</div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {book.songs
+            .slice()
+            .sort((a, b) => a.page - b.page || a.title.localeCompare(b.title))
+            .map((song, index) => (
+              <div key={song.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">{song.title}</div>
+                    <div className="text-xs text-slate-500">Song {index + 1}</div>
+                  </div>
+                  <Link
+                    to={`/books/${book.id}/songs/${song.id}`}
+                    className={`${primaryButtonClass} px-3 py-1.5 text-xs`}
+                  >
+                    Open
+                  </Link>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_92px_auto]">
+                  <input
+                    className={inputClass}
+                    value={song.title}
+                    onChange={(e) =>
+                      updateBook(book.id, {
+                        songs: book.songs.map((entry) =>
+                          entry.id === song.id ? { ...entry, title: e.target.value } : entry
+                        ),
+                      })
+                    }
+                  />
+                  <input
+                    className={`${pageInputClass} w-full`}
+                    type="number"
+                    min="1"
+                    max={book.pageCount || 1}
+                    value={song.page}
+                    onChange={(e) =>
+                      updateBook(book.id, {
+                        songs: book.songs.map((entry) =>
+                          entry.id === song.id
+                            ? { ...entry, page: clampPage(e.target.value, book.pageCount) }
+                            : entry
+                        ),
+                      })
+                    }
+                  />
+                  <button
+                    className={dangerGhostButtonClass}
+                    onClick={() =>
+                      updateBook(book.id, {
+                        songs: book.songs.filter((entry) => entry.id !== song.id),
+                      })
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -823,9 +823,6 @@ function ManagePage({
                     >
                       {book.statusLoading ? 'Checking status…' : 'Get status'}
                     </button>
-                    <Link to={`/books/${book.id}`} className={secondaryButtonClass}>
-                      Open songs
-                    </Link>
                   </div>
                 </div>
                 {book.analysisError ? (
@@ -848,6 +845,7 @@ function ManagePage({
                     {book.analysisStatus ? ` · Status: ${book.analysisStatus}` : ''}
                   </div>
                 ) : null}
+                <BookSongEditor book={book} updateBook={updateBook} />
               </div>
             ))}
           </div>
@@ -1014,7 +1012,6 @@ function MobileTabs({ books }) {
 
   const tabs = [
     { label: 'Books', to: '/' },
-    { label: 'Songs', to: book ? `/books/${book.id}` : '/' },
     { label: 'Manage', to: '/manage' },
   ];
 
@@ -1242,11 +1239,19 @@ export default function App() {
     try {
       const payload = await fetchAnalysisStatus(book, authSession);
       const status = payload.status || 'unknown';
+      const completedSongs = status === 'completed' ? normalizeAnalyzedSongs(payload) : [];
+
       updateBook(book.id, {
         statusLoading: false,
         analysisError: '',
         analysisStatus: status,
-        analysisSuccess: `Analysis status: ${status}`,
+        songs: completedSongs.length ? completedSongs : book.songs,
+        analysisSuccess:
+          status === 'completed'
+            ? completedSongs.length
+              ? `Analysis completed. Loaded ${completedSongs.length} song${completedSongs.length === 1 ? '' : 's'}.`
+              : 'Analysis completed, but no songs were returned.'
+            : `Analysis status: ${status}`,
       });
     } catch (error) {
       updateBook(book.id, {
@@ -1265,7 +1270,7 @@ export default function App() {
 
       <Routes>
         <Route path="/" element={<BooksPage books={books} isRestoringFiles={isRestoringFiles} />} />
-        <Route path="/books/:bookId" element={<SongListPage books={books} updateBook={updateBook} />} />
+        <Route path="/books/:bookId" element={<Navigate to="/manage" replace />} />
         <Route
           path="/manage"
           element={
