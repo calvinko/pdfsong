@@ -1,9 +1,8 @@
 import express from 'express';
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import multer from 'multer';
-import { extractSongbookIndexFromPdf } from './genindex-gpt.js';
-
 const router = express.Router();
 const uploadsDir = path.resolve('uploads');
 
@@ -56,6 +55,49 @@ router.post('/getindex', upload.single('pdf'), async (req, res) => {
       fs.unlink(uploadedPath).catch(() => {});
     }
   }
+});
+
+router.post('/analyze', upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        error: 'Upload a PDF file using the pdf form-data field.'
+      });
+    }
+
+    res.json({
+      handle: randomUUID(),
+      filename: req.file.filename,
+      localFilename: req.file.filename,
+      originalFilename: req.file.originalname || 'songbook.pdf',
+      route: 'songpdf/analyze',
+      placeholder: true
+    });
+  } catch (error) {
+    console.error('Song PDF analyze upload failed:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to store uploaded PDF for analysis.'
+    });
+  }
+});
+
+router.get('/getstatus', async (req, res) => {
+  const handle = typeof req.query.handle === 'string' ? req.query.handle.trim() : '';
+
+  if (!handle) {
+    return res.status(400).json({
+      error: 'Provide the analysis handle in the handle query parameter.'
+    });
+  }
+
+  res.json({
+    ok: true,
+    handle,
+    status: 'queued',
+    route: 'songpdf/getstatus',
+    placeholder: true,
+    message: 'Placeholder status response. Add your background processing later.'
+  });
 });
 
 router.get('/check', async (_req, res) => {

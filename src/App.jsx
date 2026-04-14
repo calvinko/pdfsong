@@ -142,6 +142,9 @@ function saveCatalog(books) {
     fileName: book.fileName,
     pageCount: book.pageCount,
     songs: book.songs,
+    analysisHandle: book.analysisHandle || '',
+    analysisStatus: book.analysisStatus || '',
+    analysisFilename: book.analysisFilename || '',
   }));
   localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
 }
@@ -222,90 +225,27 @@ async function apiAuthedRequest(path, authSession, options = {}) {
   });
 }
 
-function normalizeSongPage(value, fallback) {
-  const candidates = [value, fallback];
-
-  for (const candidate of candidates) {
-    const page = Number(candidate);
-    if (Number.isFinite(page) && page > 0) {
-      return Math.round(page);
-    }
-  }
-
-  return 1;
-}
-
-function normalizeRemoteIndex(payload) {
-  const rawSongs =
-    payload?.songs ||
-    payload?.index ||
-    payload?.items ||
-    payload?.results ||
-    payload?.data?.songs ||
-    payload?.data?.index ||
-    payload?.data ||
-    [];
-
-  const list = Array.isArray(rawSongs) ? rawSongs : [];
-  const seen = new Set();
-
-  const songs = list
-    .map((entry, index) => {
-      if (!entry || typeof entry !== 'object') return null;
-
-      const title =
-        entry.title ||
-        entry.name ||
-        entry.songTitle ||
-        entry.song ||
-        entry.label ||
-        '';
-      const trimmedTitle = String(title).trim();
-      if (!trimmedTitle) return null;
-
-      const page = normalizeSongPage(
-        entry.page ?? entry.pageNo ?? entry.pageNumber ?? entry.page_num ?? entry.pdfPage ?? entry.number,
-        index + 1
-      );
-
-      const dedupeKey = `${trimmedTitle.toLowerCase()}::${page}`;
-      if (seen.has(dedupeKey)) return null;
-      seen.add(dedupeKey);
-
-      return {
-        id: uid('song'),
-        title: trimmedTitle,
-        page,
-      };
-    })
-    .filter(Boolean);
-
-  return {
-    songs,
-    pageCount: Number(payload?.pageCount ?? payload?.numPages ?? payload?.pages ?? payload?.data?.pageCount) || null,
-  };
-}
-
-async function fetchBookIndex(book, authSession) {
+async function uploadBookForAnalysis(book, authSession) {
   if (!book.file) {
-    throw new Error('This book needs its PDF file before the remote index can be generated.');
+    throw new Error('This book needs its PDF file before analysis can start.');
   }
 
   const formData = new FormData();
   formData.append('pdf', book.file, book.fileName || book.file.name || `${book.title}.pdf`);
 
-  const payload = await apiAuthedRequest('/songpdf/getindex', authSession, {
+  return apiAuthedRequest('/songpdf/analyze', authSession, {
     method: 'POST',
     body: formData,
   });
+}
 
-  const normalized = normalizeRemoteIndex(payload);
-
-  if (!normalized.songs.length) {
-    throw new Error('The getindex API returned no songs for this book.');
+async function fetchAnalysisStatus(book, authSession) {
+  if (!book.analysisHandle) {
+    throw new Error('Run Analyze first so this book has an analysis handle.');
   }
 
-  return normalized;
+  const query = new URLSearchParams({ handle: book.analysisHandle });
+  return apiAuthedRequest(`/songpdf/getstatus?${query.toString()}`, authSession);
 }
 
 async function extractSongSuggestions(file) {
@@ -371,6 +311,9 @@ function bookFromStored(book) {
     file: null,
     url: null,
     missingFile: true,
+    analysisHandle: book.analysisHandle || '',
+    analysisStatus: book.analysisStatus || '',
+    analysisFilename: book.analysisFilename || '',
   };
 }
 
@@ -404,6 +347,9 @@ async function booksFromFiles(files) {
       file,
       pageCount,
       songs,
+      analysisHandle: '',
+      analysisStatus: '',
+      analysisFilename: '',
     };
     await savePdfFile(book.id, file);
     books.push(attachFileToBook(book, file));
@@ -654,7 +600,8 @@ function ManagePage({
   onAuthSuccess,
   onLogout,
   updateBook,
-  onGetIndex,
+  onAnalyze,
+  onGetStatus,
 }) {
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({
@@ -859,28 +806,41 @@ function ManagePage({
                     </button>
                     <button
                       className={secondaryButtonClass}
-                      onClick={() => onGetIndex(book)}
-                      disabled={book.indexLoading || book.missingFile}
+                      onClick={() => onAnalyze(book)}
+                      disabled={book.analysisLoading || book.statusLoading || book.missingFile}
                     >
-                      {book.indexLoading ? 'Loading index…' : 'Get index'}
+                      {book.analysisLoading ? 'Analyzing…' : 'Analyze'}
+                    </button>
+                    <button
+                      className={secondaryButtonClass}
+                      onClick={() => onGetStatus(book)}
+                      disabled={book.analysisLoading || book.statusLoading || !book.analysisHandle}
+                    >
+                      {book.statusLoading ? 'Checking status…' : 'Get status'}
                     </button>
                     <Link to={`/books/${book.id}`} className={secondaryButtonClass}>
                       Open songs
                     </Link>
                   </div>
                 </div>
-                {book.indexError ? (
+                {book.analysisError ? (
                   <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                    {book.indexError}
+                    {book.analysisError}
                   </div>
                 ) : book.missingFile ? (
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                    Re-add the PDF file before requesting the remote index.
+                    Re-add the PDF file before starting analysis.
                   </div>
                 ) : null}
-                {book.indexSuccess ? (
+                {book.analysisSuccess ? (
                   <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                    {book.indexSuccess}
+                    {book.analysisSuccess}
+                  </div>
+                ) : null}
+                {book.analysisHandle ? (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                    Handle: {book.analysisHandle}
+                    {book.analysisStatus ? ` · Status: ${book.analysisStatus}` : ''}
                   </div>
                 ) : null}
               </div>
@@ -1182,6 +1142,9 @@ export default function App() {
         fileName: book.fileName,
         pageCount: book.pageCount,
         songs: book.songs,
+        analysisHandle: book.analysisHandle || '',
+        analysisStatus: book.analysisStatus || '',
+        analysisFilename: book.analysisFilename || '',
       })),
       null,
       2
@@ -1209,6 +1172,9 @@ export default function App() {
         title: song.title,
         page: song.page,
       })),
+      analysisHandle: book.analysisHandle || '',
+      analysisStatus: book.analysisStatus || '',
+      analysisFilename: book.analysisFilename || '',
       file: null,
       url: null,
       missingFile: true,
@@ -1234,27 +1200,54 @@ export default function App() {
     setAuthSession(null);
   }
 
-  async function handleGetIndex(book) {
+  async function handleAnalyze(book) {
     updateBook(book.id, {
-      indexLoading: true,
-      indexError: '',
-      indexSuccess: '',
+      analysisLoading: true,
+      statusLoading: false,
+      analysisError: '',
+      analysisSuccess: '',
     });
 
     try {
-      const { songs, pageCount } = await fetchBookIndex(book, authSession);
+      const payload = await uploadBookForAnalysis(book, authSession);
       updateBook(book.id, {
-        songs,
-        pageCount: pageCount || book.pageCount,
-        indexLoading: false,
-        indexError: '',
-        indexSuccess: `Loaded ${songs.length} song${songs.length === 1 ? '' : 's'} from the remote index.`,
+        analysisLoading: false,
+        analysisError: '',
+        analysisHandle: payload.handle || '',
+        analysisFilename: payload.localFilename || payload.filename || '',
+        analysisStatus: payload.status || 'queued',
+        analysisSuccess: payload.handle ? `Analysis started. Handle: ${payload.handle}` : 'Analysis started.',
       });
     } catch (error) {
       updateBook(book.id, {
-        indexLoading: false,
-        indexError: error.message || 'Unable to load the remote index for this book.',
-        indexSuccess: '',
+        analysisLoading: false,
+        analysisError: error.message || 'Unable to start analysis for this book.',
+        analysisSuccess: '',
+      });
+    }
+  }
+
+  async function handleGetStatus(book) {
+    updateBook(book.id, {
+      statusLoading: true,
+      analysisError: '',
+      analysisSuccess: '',
+    });
+
+    try {
+      const payload = await fetchAnalysisStatus(book, authSession);
+      const status = payload.status || 'unknown';
+      updateBook(book.id, {
+        statusLoading: false,
+        analysisError: '',
+        analysisStatus: status,
+        analysisSuccess: `Analysis status: ${status}`,
+      });
+    } catch (error) {
+      updateBook(book.id, {
+        statusLoading: false,
+        analysisError: error.message || 'Unable to get analysis status for this book.',
+        analysisSuccess: '',
       });
     }
   }
@@ -1285,7 +1278,8 @@ export default function App() {
               onAuthSuccess={handleAuthSuccess}
               onLogout={handleLogout}
               updateBook={updateBook}
-              onGetIndex={handleGetIndex}
+              onAnalyze={handleAnalyze}
+              onGetStatus={handleGetStatus}
             />
           }
         />
