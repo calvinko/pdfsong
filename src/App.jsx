@@ -26,7 +26,7 @@ const API_BASE_URL = 'https://biblecircle.org/kapi';
 
 const panelClass = 'rounded-2xl border border-slate-200 bg-white shadow-sm';
 const panelHeaderClass = 'border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900';
-const panelBodyClass = 'p-4';
+const panelBodyClass = 'p-0';
 const emptyPanelClass = 'rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600';
 const inputClass =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200';
@@ -843,7 +843,7 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, c
     <div className="flex flex-col gap-3">
       {loading ? <div className={emptyPanelClass}>Rendering page…</div> : null}
       {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
-      <div className="relative overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+      <div className="relative overflow-auto border border-slate-200 bg-slate-50 p-0">
         <canvas ref={canvasRef} className="mx-auto block h-auto max-w-full rounded-lg bg-white shadow-sm" />
         {controls ? <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center md:hidden">{controls}</div> : null}
       </div>
