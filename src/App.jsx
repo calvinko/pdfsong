@@ -1371,7 +1371,8 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
         const page = await pdf.getPage(safePage);
         if (cancelled) return;
 
-        const viewport = page.getViewport({ scale: 2 });
+        const renderScale = window.innerWidth < 640 ? 1.5 : 2;
+        const viewport = page.getViewport({ scale: renderScale });
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
         const ratio = window.devicePixelRatio || 1;
