@@ -12,6 +12,8 @@ import {
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
+
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const STORAGE_KEY = 'songbook-pwa-catalog-v1';
@@ -916,6 +918,7 @@ function ManagePage({
   books,
   isRestoringFiles,
   authSession,
+  importStatus,
   fileInputRef,
   catalogInputRef,
   onAddFolder,
@@ -925,6 +928,8 @@ function ManagePage({
   onClear,
   onDeleteBook,
   onReorderBooks,
+  onDismissImportStatus,
+  onImportAnyway,
   onAuthSuccess,
   onLogout,
   updateBook,
@@ -1021,6 +1026,12 @@ function ManagePage({
 
   return (
     <div className="flex flex-col gap-4">
+      <ImportStatusPane
+        status={importStatus}
+        onDismiss={onDismissImportStatus}
+        onImportAnyway={onImportAnyway}
+      />
+
       <PageFrame title="Account" subtitle="Register or log in from the app">
         {authSession ? (
           <div className="flex flex-col gap-4">
@@ -1599,7 +1610,6 @@ export default function App() {
         currentFile: '',
         items: []
       });
-      navigate('/');
       const newBooks = await booksFromFiles(files, books, (next) => {
         setImportStatus((current) => {
           const value = typeof next === 'function' ? next(current) : next;
@@ -1639,7 +1649,6 @@ export default function App() {
         currentFile: '',
         items: []
       });
-      navigate('/');
       const newBooks = await booksFromFiles(files, books, (next) => {
         setImportStatus((current) => {
           const value = typeof next === 'function' ? next(current) : next;
@@ -1678,7 +1687,6 @@ export default function App() {
       currentFile: '',
       items: []
     });
-    navigate('/');
 
     try {
       const newBooks = await booksFromFiles([item.file], books, (next) => {
@@ -1850,14 +1858,6 @@ export default function App() {
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
       <AppHeader />
-      <ImportStatusPane
-        status={importStatus}
-        onDismiss={() => {
-          setImportStatus((current) => ({ ...current, visible: false }));
-          navigate('/');
-        }}
-        onImportAnyway={handleImportAnyway}
-      />
 
       <Routes>
         <Route path="/" element={<BooksPage books={books} isRestoringFiles={isRestoringFiles} />} />
@@ -1869,6 +1869,7 @@ export default function App() {
               books={books}
               isRestoringFiles={isRestoringFiles}
               authSession={authSession}
+              importStatus={importStatus}
               fileInputRef={fileInputRef}
               catalogInputRef={catalogInputRef}
               onAddFolder={handleAddFolder}
@@ -1878,6 +1879,11 @@ export default function App() {
               onClear={handleClear}
               onDeleteBook={handleDeleteBook}
               onReorderBooks={reorderBooks}
+              onDismissImportStatus={() => {
+                setImportStatus((current) => ({ ...current, visible: false }));
+                navigate('/manage');
+              }}
+              onImportAnyway={handleImportAnyway}
               onAuthSuccess={handleAuthSuccess}
               onLogout={handleLogout}
               updateBook={updateBook}
