@@ -10,8 +10,8 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const ALLOWED_ORIGINS = new Set([
-  'https://biblecircle.vercel.app',
-  'https://app.biblecircle.org',
+  'https://pdfsong.vercel.app',
+  'https://mysong.kosolution.net',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
