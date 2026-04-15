@@ -841,7 +841,6 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, c
 
   return (
     <div className="flex flex-col gap-3">
-      {loading ? <div className={emptyPanelClass}>Rendering page…</div> : null}
       {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
       <div className="relative overflow-auto border border-slate-200 bg-slate-50 p-0">
         <canvas ref={canvasRef} className="mx-auto block h-auto max-w-full rounded-lg bg-white shadow-sm" />
