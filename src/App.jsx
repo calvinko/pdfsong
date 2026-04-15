@@ -1389,8 +1389,6 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
         const ratio = window.devicePixelRatio || 1;
         canvas.width = Math.floor(viewport.width * ratio);
         canvas.height = Math.floor(viewport.height * ratio);
-        canvas.style.width = `${Math.floor(viewport.width)}px`;
-        canvas.style.height = `${Math.floor(viewport.height)}px`;
         context.setTransform(ratio, 0, 0, ratio, 0, 0);
 
         await page.render({ canvasContext: context, viewport }).promise;
