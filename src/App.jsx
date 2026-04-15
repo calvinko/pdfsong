@@ -1366,10 +1366,11 @@ function ManagePage({
   );
 }
 
-function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
+function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, onGoToPage, onPrevSong, onNextSong }) {
   const canvasRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [zoomScale, setZoomScale] = useState(() => (window.innerWidth < 640 ? 1.5 : 2));
 
   useEffect(() => {
     let cancelled = false;
@@ -1386,8 +1387,7 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
         const page = await pdf.getPage(safePage);
         if (cancelled) return;
 
-        const renderScale = window.innerWidth < 640 ? 1.5 : 2;
-        const viewport = page.getViewport({ scale: renderScale });
+        const viewport = page.getViewport({ scale: zoomScale });
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
         const ratio = window.devicePixelRatio || 1;
@@ -1409,7 +1409,7 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
     return () => {
       cancelled = true;
     };
-  }, [file, url, pageNumber, onPageCount]);
+  }, [file, url, pageNumber, onPageCount, zoomScale]);
 
   if (!file || !url) return <div className={emptyPanelClass}>Select a song to open its PDF page.</div>;
 
@@ -1417,8 +1417,59 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
     <div className="flex flex-col gap-3">
       {loading ? <div className={emptyPanelClass}>Rendering page…</div> : null}
       {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
-      <div className="overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+      <div className="relative overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
         <canvas ref={canvasRef} className="mx-auto block h-auto max-w-full rounded-lg bg-white shadow-sm" />
+        <div className="pointer-events-none absolute left-1/2 top-6 z-10 -translate-x-1/2">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-slate-200 bg-white/35 px-3 py-2 opacity-45 shadow-lg backdrop-blur transition hover:bg-white/95 hover:opacity-100 focus-within:bg-white/95 focus-within:opacity-100">
+            <button
+              className={ghostButtonClass}
+              onClick={() => setZoomScale((current) => Math.max(1, current - 0.25))}
+              aria-label="Decrease size"
+              title="Decrease size"
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="8.5" cy="8.5" r="4.5" />
+                <path d="M12 12l4 4" />
+                <path d="M6.5 8.5h4" />
+              </svg>
+            </button>
+            <button
+              className={ghostButtonClass}
+              onClick={() => setZoomScale((current) => Math.min(4, current + 0.25))}
+              aria-label="Increase size"
+              title="Increase size"
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="8.5" cy="8.5" r="4.5" />
+                <path d="M12 12l4 4" />
+                <path d="M8.5 6.5v4" />
+                <path d="M6.5 8.5h4" />
+              </svg>
+            </button>
+            <button className={ghostButtonClass} onClick={() => onGoToPage(pageNumber - 1)} aria-label="Previous page" title="Previous page">
+              <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12.5 4.5L7 10l5.5 5.5" />
+              </svg>
+            </button>
+            <button className={ghostButtonClass} onClick={() => onGoToPage(pageNumber + 1)} aria-label="Next page" title="Next page">
+              <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M7.5 4.5L13 10l-5.5 5.5" />
+              </svg>
+            </button>
+            <button className={ghostButtonClass} onClick={onPrevSong} aria-label="Previous song" title="Previous song">
+              <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4.5L5.5 10 11 15.5" />
+                <path d="M15 4.5L9.5 10 15 15.5" />
+              </svg>
+            </button>
+            <button className={ghostButtonClass} onClick={onNextSong} aria-label="Next song" title="Next song">
+              <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 4.5L14.5 10 9 15.5" />
+                <path d="M5 4.5L10.5 10 5 15.5" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1427,6 +1478,7 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount }) {
 function SongViewerPage({ books, updateBook, isRestoringFiles }) {
   const { bookId, songId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const book = books.find((entry) => entry.id === bookId);
   const song = book?.songs.find((entry) => entry.id === songId) || null;
 
@@ -1457,30 +1509,23 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
     setSearchParams({ page: String(clampPage(value, book.pageCount || currentPage)) });
   };
 
+  const songIndex = book.songs.findIndex((entry) => entry.id === song.id);
+
+  const goToSong = (offset) => {
+    if (songIndex === -1) return;
+
+    const nextSong = book.songs[songIndex + offset];
+    if (!nextSong) return;
+
+    navigate(`/books/${book.id}/songs/${nextSong.id}?page=${nextSong.page}`);
+  };
+
   return (
     <PageFrame
       title={song.title}
       subtitle={`${book.title} · target page ${song.page} · page ${currentPage} of ${book.pageCount || '?'}`}
       backTo={`/books/${book.id}`}
       backLabel="Songs"
-      footer={
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <button className={ghostButtonClass} onClick={() => goToPage(currentPage - 1)}>
-            Prev
-          </button>
-          <input
-            className={pageInputClass}
-            type="number"
-            min="1"
-            max={book.pageCount || 1}
-            value={currentPage}
-            onChange={(e) => goToPage(e.target.value)}
-          />
-          <button className={ghostButtonClass} onClick={() => goToPage(currentPage + 1)}>
-            Next
-          </button>
-        </div>
-      }
     >
       {isRestoringFiles ? (
         <div className={emptyPanelClass}>Restoring saved PDFs…</div>
@@ -1492,6 +1537,9 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
           url={book.url}
           pageNumber={currentPage}
           pageCount={book.pageCount}
+          onGoToPage={goToPage}
+          onPrevSong={() => goToSong(-1)}
+          onNextSong={() => goToSong(1)}
           onPageCount={(count) => {
             if (count !== book.pageCount) {
               updateBook(book.id, { pageCount: count });
