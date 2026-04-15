@@ -56,7 +56,7 @@ app.use(
 );
 app.use(express.json());
 app.use(
-  '/api/auth',
+  '/auth',
   createAuthRouter({ pool })
 );
 app.use('/songpdf', songPdfRouter);
