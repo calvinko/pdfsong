@@ -598,12 +598,16 @@ function AppHeader() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-700">
-            Offline Songbooks
+            My Song Books
           </div>
-          <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Song Book Library</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-            Browse books, open a song list, and jump straight to the PDF page you need on desktop or mobile.
-          </p>
+          {onManagePage ? (
+            <>
+              <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Song Book Library</h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                Browse books, open a song list, and jump straight to the PDF page you need on desktop or mobile.
+              </p>
+            </>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
