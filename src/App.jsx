@@ -416,6 +416,15 @@ function getBookKeys(values) {
   return keys;
 }
 
+function sortBooksByTitle(books) {
+  return [...books].sort((a, b) =>
+    String(a.title || '').localeCompare(String(b.title || ''), undefined, {
+      sensitivity: 'base',
+      numeric: true
+    })
+  );
+}
+
 async function booksFromFiles(files, existingBooks = [], onProgress, options = {}) {
   const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith('.pdf'));
   const books = [];
@@ -691,7 +700,7 @@ function ImportStatusPane({ status, onDismiss, onImportAnyway }) {
   );
 }
 
-function PageFrame({ title, subtitle, backTo, backLabel, children, footer }) {
+function PageFrame({ title, subtitle, backTo, backLabel, headerAction, children, footer }) {
   return (
     <section className={`${panelClass} overflow-hidden`}>
       <div className={panelHeaderClass}>
@@ -700,7 +709,8 @@ function PageFrame({ title, subtitle, backTo, backLabel, children, footer }) {
             <div className="truncate text-base font-semibold text-slate-900">{title}</div>
             {subtitle ? <div className="mt-1 text-sm font-normal text-slate-500">{subtitle}</div> : null}
           </div>
-          {backTo ? (
+          {headerAction ? headerAction : null}
+          {!headerAction && backTo ? (
             <Link to={backTo} className={secondaryButtonClass}>
               {backLabel || 'Back'}
             </Link>
@@ -914,6 +924,7 @@ function ManagePage({
   onImportCatalog,
   onClear,
   onDeleteBook,
+  onReorderBooks,
   onAuthSuccess,
   onLogout,
   updateBook,
@@ -931,6 +942,10 @@ function ManagePage({
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [collapsedBooks, setCollapsedBooks] = useState({});
   const [editingBooks, setEditingBooks] = useState({});
+  const [arrangeMode, setArrangeMode] = useState(false);
+  const [draggedBookId, setDraggedBookId] = useState(null);
+  const [renamingBookId, setRenamingBookId] = useState(null);
+  const [renamingTitle, setRenamingTitle] = useState('');
 
   useEffect(() => {
     setCollapsedBooks((current) => {
@@ -943,6 +958,20 @@ function ManagePage({
       return next;
     });
   }, [books]);
+
+  function startRenamingBook(book) {
+    setRenamingBookId(book.id);
+    setRenamingTitle(book.title || '');
+  }
+
+  function finishRenamingBook(book) {
+    const nextTitle = renamingTitle.trim();
+    if (nextTitle) {
+      updateBook(book.id, { title: nextTitle });
+    }
+    setRenamingBookId(null);
+    setRenamingTitle('');
+  }
 
   useEffect(() => {
     setEditingBooks((current) => {
@@ -1125,9 +1154,15 @@ function ManagePage({
       <PageFrame
         title="Books"
         subtitle="Add a song directly into any book"
-        footer={
+        headerAction={
           books.length ? (
-            <div className="flex justify-end">
+            <div className="flex items-center gap-2">
+              <button
+                className={secondaryButtonClass}
+                onClick={() => setArrangeMode((current) => !current)}
+              >
+                {arrangeMode ? 'Done arranging' : 'Arrange'}
+              </button>
               <button
                 className={secondaryButtonClass}
                 onClick={() =>
@@ -1150,25 +1185,84 @@ function ManagePage({
         ) : books.length === 0 ? (
           <div className={emptyPanelClass}>No books loaded yet.</div>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             {books.map((book) => (
-              <div key={book.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-start justify-between gap-3">
+              <div
+                key={book.id}
+                className={`rounded-lg border px-3 py-2.5 ${
+                  arrangeMode && draggedBookId === book.id
+                    ? 'border-sky-400 bg-sky-50'
+                    : 'border-slate-200 bg-slate-50'
+                }`}
+                draggable={arrangeMode}
+                onDragStart={() => setDraggedBookId(book.id)}
+                onDragEnd={() => setDraggedBookId(null)}
+                onDragOver={(event) => {
+                  if (!arrangeMode || draggedBookId === null || draggedBookId === book.id) return;
+                  event.preventDefault();
+                }}
+                onDrop={() => {
+                  if (!arrangeMode || draggedBookId === null || draggedBookId === book.id) return;
+                  onReorderBooks(draggedBookId, book.id);
+                  setDraggedBookId(draggedBookId);
+                }}
+              >
+                <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">{book.title}</div>
-                    <div className="mt-1 text-xs text-slate-500">
+                    <div className="flex items-center gap-1.5">
+                      {renamingBookId === book.id ? (
+                        <input
+                          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm font-semibold text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
+                          value={renamingTitle}
+                          onChange={(e) => setRenamingTitle(e.target.value)}
+                          onBlur={() => finishRenamingBook(book)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') finishRenamingBook(book);
+                            if (e.key === 'Escape') {
+                              setRenamingBookId(null);
+                              setRenamingTitle('');
+                            }
+                          }}
+                          autoFocus
+                        />
+                      ) : (
+                        <>
+                          <div className="text-sm font-semibold text-slate-900">{book.title}</div>
+                          <button
+                            className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 transition hover:bg-white hover:text-slate-700"
+                            onClick={() => startRenamingBook(book)}
+                            aria-label={`Edit ${book.title} name`}
+                            title="Edit book name"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
+                              <path d="M12 20h9" />
+                              <path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4z" />
+                            </svg>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500">
                       {book.songs.length} songs · {book.pageCount || '?'} pages
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
+                    {arrangeMode ? (
+                      <div
+                        className="inline-flex h-6 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-500"
+                        title="Drag to reorder"
+                      >
+                        ≡
+                      </div>
+                    ) : null}
                     <button
-                      className="inline-flex h-7 items-center justify-center rounded-md border border-rose-300 bg-white px-2.5 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
+                      className="inline-flex h-6 items-center justify-center rounded-md border border-rose-300 bg-white px-2 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
                       onClick={() => onDeleteBook(book)}
                     >
                       Delete
                     </button>
                     <button
-                      className="inline-flex h-7 items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                      className="inline-flex h-6 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
                       onClick={() =>
                         setEditingBooks((current) => ({
                           ...current,
@@ -1179,7 +1273,7 @@ function ManagePage({
                       {editingBooks[book.id] ? 'Done' : 'Edit'}
                     </button>
                     <button
-                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
                       onClick={() =>
                         setCollapsedBooks((current) => ({
                           ...current,
@@ -1193,7 +1287,7 @@ function ManagePage({
                     </button>
                   </div>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-2">
                     {editingBooks[book.id] ? (
                       <>
                     <button
@@ -1477,6 +1571,22 @@ export default function App() {
     );
   }
 
+  function reorderBooks(sourceBookId, targetBookId) {
+    setBooks((current) => {
+      const sourceIndex = current.findIndex((book) => book.id === sourceBookId);
+      const targetIndex = current.findIndex((book) => book.id === targetBookId);
+
+      if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) {
+        return current;
+      }
+
+      const next = [...current];
+      const [moved] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, moved);
+      return next;
+    });
+  }
+
   async function handleAddFolder() {
     try {
       const files = await pickFolderFiles();
@@ -1499,7 +1609,7 @@ export default function App() {
           };
         });
       });
-      setBooks((current) => [...current, ...newBooks]);
+      setBooks((current) => sortBooksByTitle([...current, ...newBooks]));
       setImportStatus((current) => ({
         ...current,
         visible: true,
@@ -1539,7 +1649,7 @@ export default function App() {
           };
         });
       });
-      setBooks((current) => [...current, ...newBooks]);
+      setBooks((current) => sortBooksByTitle([...current, ...newBooks]));
       setImportStatus((current) => ({
         ...current,
         visible: true,
@@ -1581,7 +1691,7 @@ export default function App() {
         });
       }, { allowDuplicates: true });
 
-      setBooks((current) => [...current, ...newBooks]);
+      setBooks((current) => sortBooksByTitle([...current, ...newBooks]));
       setImportStatus((current) => ({
         ...current,
         visible: true,
@@ -1766,6 +1876,7 @@ export default function App() {
               onImportCatalog={importCatalog}
               onClear={handleClear}
               onDeleteBook={handleDeleteBook}
+              onReorderBooks={reorderBooks}
               onAuthSuccess={handleAuthSuccess}
               onLogout={handleLogout}
               updateBook={updateBook}
