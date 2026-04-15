@@ -911,7 +911,7 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
   return (
     <PageFrame
       title={song.title}
-      subtitle={`${book.title} · target page ${song.page} · page ${currentPage} of ${book.pageCount || '?'}`}
+      subtitle={`${book.title} · page ${currentPage} of ${book.pageCount || '?'}`}
       backTo={`/books/${book.id}`}
       backLabel="Songs"
       headerAction={<div className="hidden md:block">{controls}</div>}

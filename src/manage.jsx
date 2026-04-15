@@ -196,6 +196,145 @@ function BookSongIndexList({ book, emptyPanelClass }) {
   );
 }
 
+function AuthOverlay({
+  authSession,
+  authMode,
+  authForm,
+  authError,
+  authSuccess,
+  authSubmitting,
+  inputClass,
+  primaryButtonClass,
+  dangerGhostButtonClass,
+  secondaryButtonClass,
+  onClose,
+  onLogout,
+  onAuthModeChange,
+  onAuthFormChange,
+  onSubmit,
+}) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div>
+            <div className="text-base font-semibold text-slate-900">
+              {authSession ? 'Account' : authMode === 'register' ? 'Create account' : 'Log in'}
+            </div>
+            <div className="mt-1 text-sm text-slate-500">
+              {authSession ? 'Manage your current session.' : 'Register or log in from the app.'}
+            </div>
+          </div>
+          <button
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+            onClick={onClose}
+            aria-label="Close login dialog"
+            title="Close"
+            type="button"
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+              <path d="M5 5l10 10" />
+              <path d="M15 5L5 15" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-4 px-5 py-5">
+          {authSession ? (
+            <>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm font-semibold text-slate-900">
+                  {authSession.user?.email || 'Signed in'}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {authSession.user?.userUuid ? `User ID: ${authSession.user.userUuid}` : 'Session active'}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button className={secondaryButtonClass} onClick={onClose} type="button">
+                  Close
+                </button>
+                <button className={dangerGhostButtonClass} onClick={onLogout} type="button">
+                  Log out
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                <button
+                  className={`rounded-md px-3 py-2 text-sm font-medium ${authMode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
+                  onClick={() => onAuthModeChange('login')}
+                  type="button"
+                >
+                  Login
+                </button>
+                <button
+                  className={`rounded-md px-3 py-2 text-sm font-medium ${authMode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
+                  onClick={() => onAuthModeChange('register')}
+                  type="button"
+                >
+                  Register
+                </button>
+              </div>
+
+              <form className="flex flex-col gap-3" onSubmit={onSubmit}>
+                {authMode === 'register' ? (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium text-slate-700">Display name</label>
+                    <input
+                      className={inputClass}
+                      value={authForm.displayName}
+                      onChange={(e) => onAuthFormChange('displayName', e.target.value)}
+                      placeholder="Your name"
+                    />
+                  </div>
+                ) : null}
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-slate-700">Email</label>
+                  <input
+                    className={inputClass}
+                    type="email"
+                    value={authForm.email}
+                    onChange={(e) => onAuthFormChange('email', e.target.value)}
+                    placeholder="you@example.com"
+                    required
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-slate-700">Password</label>
+                  <input
+                    className={inputClass}
+                    type="password"
+                    value={authForm.password}
+                    onChange={(e) => onAuthFormChange('password', e.target.value)}
+                    placeholder={authMode === 'register' ? 'At least 8 characters' : 'Your password'}
+                    required
+                  />
+                </div>
+
+                {authError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{authError}</div> : null}
+                {authSuccess ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{authSuccess}</div> : null}
+
+                <div className="flex justify-end gap-2">
+                  <button className={secondaryButtonClass} onClick={onClose} type="button">
+                    Close
+                  </button>
+                  <button className={primaryButtonClass} type="submit" disabled={authSubmitting}>
+                    {authSubmitting ? 'Please wait…' : authMode === 'register' ? 'Create account' : 'Log in'}
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ManagePage({
   books,
   isRestoringFiles,
@@ -244,6 +383,7 @@ export default function ManagePage({
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [showAuthOverlay, setShowAuthOverlay] = useState(false);
   const [collapsedBooks, setCollapsedBooks] = useState({});
   const [editingBooks, setEditingBooks] = useState({});
   const [arrangeMode, setArrangeMode] = useState(false);
@@ -316,6 +456,7 @@ export default function ManagePage({
       onAuthSuccess(session);
       setAuthSuccess(authMode === 'register' ? 'Registration successful.' : 'Login successful.');
       setAuthForm((current) => ({ ...current, password: '' }));
+      setShowAuthOverlay(false);
     } catch (error) {
       setAuthError(error.message || 'Authentication failed.');
     } finally {
@@ -325,6 +466,37 @@ export default function ManagePage({
 
   return (
     <div className="flex flex-col gap-4">
+      {showAuthOverlay ? (
+        <AuthOverlay
+          authSession={authSession}
+          authMode={authMode}
+          authForm={authForm}
+          authError={authError}
+          authSuccess={authSuccess}
+          authSubmitting={authSubmitting}
+          inputClass={inputClass}
+          primaryButtonClass={primaryButtonClass}
+          dangerGhostButtonClass={dangerGhostButtonClass}
+          secondaryButtonClass={secondaryButtonClass}
+          onClose={() => {
+            setShowAuthOverlay(false);
+            setAuthError('');
+            setAuthSuccess('');
+          }}
+          onLogout={() => {
+            onLogout();
+            setShowAuthOverlay(false);
+          }}
+          onAuthModeChange={(mode) => {
+            setAuthMode(mode);
+            setAuthError('');
+            setAuthSuccess('');
+          }}
+          onAuthFormChange={(field, value) => setAuthForm((current) => ({ ...current, [field]: value }))}
+          onSubmit={handleAuthSubmit}
+        />
+      ) : null}
+
       <ImportStatusPane
         status={importStatus}
         onDismiss={onDismissImportStatus}
@@ -335,101 +507,26 @@ export default function ManagePage({
         secondaryButtonClass={secondaryButtonClass}
       />
 
-      <PageFrame title="Account" subtitle="Register or log in from the app">
-        {authSession ? (
-          <div className="flex flex-col gap-4">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">
-                {authSession.user?.email || 'Signed in'}
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {authSession.user?.userUuid ? `User ID: ${authSession.user.userUuid}` : 'Session active'}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button className={dangerGhostButtonClass} onClick={onLogout}>
-                Log out
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-              <button
-                className={`rounded-md px-3 py-2 text-sm font-medium ${authMode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
-                onClick={() => {
-                  setAuthMode('login');
-                  setAuthError('');
-                  setAuthSuccess('');
-                }}
-                type="button"
-              >
-                Login
-              </button>
-              <button
-                className={`rounded-md px-3 py-2 text-sm font-medium ${authMode === 'register' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'}`}
-                onClick={() => {
-                  setAuthMode('register');
-                  setAuthError('');
-                  setAuthSuccess('');
-                }}
-                type="button"
-              >
-                Register
-              </button>
-            </div>
-
-            <form className="flex flex-col gap-3" onSubmit={handleAuthSubmit}>
-              {authMode === 'register' ? (
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-slate-700">Display name</label>
-                  <input
-                    className={inputClass}
-                    value={authForm.displayName}
-                    onChange={(e) => setAuthForm((current) => ({ ...current, displayName: e.target.value }))}
-                    placeholder="Your name"
-                  />
-                </div>
-              ) : null}
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-slate-700">Email</label>
-                <input
-                  className={inputClass}
-                  type="email"
-                  value={authForm.email}
-                  onChange={(e) => setAuthForm((current) => ({ ...current, email: e.target.value }))}
-                  placeholder="you@example.com"
-                  required
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-slate-700">Password</label>
-                <input
-                  className={inputClass}
-                  type="password"
-                  value={authForm.password}
-                  onChange={(e) => setAuthForm((current) => ({ ...current, password: e.target.value }))}
-                  placeholder={authMode === 'register' ? 'At least 8 characters' : 'Your password'}
-                  required
-                />
-              </div>
-
-              {authError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{authError}</div> : null}
-              {authSuccess ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{authSuccess}</div> : null}
-
-              <button className={primaryButtonClass} type="submit" disabled={authSubmitting}>
-                {authSubmitting ? 'Please wait…' : authMode === 'register' ? 'Create account' : 'Log in'}
-              </button>
-            </form>
-          </div>
-        )}
-      </PageFrame>
-
       <SectionNotice panelClass={panelClass} />
 
-      <PageFrame title="Manage Library" subtitle="Import, export, add books, and add songs from one place">
+      <PageFrame
+        title="Manage Library"
+        subtitle="Import, export, add books, and add songs from one place"
+        headerAction={
+          <button
+            className={secondaryButtonClass}
+            onClick={() => {
+              setShowAuthOverlay(true);
+              setAuthError('');
+              setAuthSuccess('');
+            }}
+            type="button"
+            title={!authSession ? 'Login to backup your song books and catalog.' : authSession.user?.email || 'Logged in'}
+          >
+            {authSession?.user?.email ? `Logged in: ${authSession.user.email}` : 'Login'}
+          </button>
+        }
+      >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <button className={primaryButtonClass} onClick={onAddFolder}>
             Import from Folder
