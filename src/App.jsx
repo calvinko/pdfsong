@@ -845,8 +845,8 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, c
       {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
       <div className="relative overflow-auto border border-slate-200 bg-slate-50 p-0">
         <canvas ref={canvasRef} className="mx-auto block h-auto max-w-full rounded-lg bg-white shadow-sm" />
-        {controls ? <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center md:hidden">{controls}</div> : null}
       </div>
+      {controls ? <div className="flex justify-center md:hidden">{controls}</div> : null}
     </div>
   );
 }
