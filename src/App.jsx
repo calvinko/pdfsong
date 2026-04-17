@@ -669,7 +669,7 @@ function BooksPage({ books, isRestoringFiles }) {
         <div className="flex flex-col gap-3">
           {books.map((book) => (
             <div key={book.id} className={listItemClass}>
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
                 <Link to={`/books/${book.id}`} className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-slate-900">{book.title}</div>
                   <div className="mt-1 text-xs text-slate-500">
@@ -677,16 +677,6 @@ function BooksPage({ books, isRestoringFiles }) {
                     {book.missingFile ? ' · relink needed' : ''}
                   </div>
                 </Link>
-                {!book.missingFile && book.url ? (
-                  <a
-                    className={`${secondaryButtonClass} shrink-0 px-3 py-1.5 text-xs`}
-                    href={book.url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open PDF
-                  </a>
-                ) : null}
               </div>
             </div>
           ))}
@@ -952,7 +942,6 @@ export default function App() {
     items: []
   });
   const fileInputRef = useRef(null);
-  const catalogInputRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -1154,58 +1143,6 @@ export default function App() {
     }
   }
 
-  function exportCatalog() {
-    const content = JSON.stringify(
-      books.map((book) => ({
-        title: book.title,
-        internalTitle: book.internalTitle || '',
-        fileName: book.fileName,
-        pageCount: book.pageCount,
-        songs: book.songs,
-        analysisHandle: book.analysisHandle || '',
-        analysisStatus: book.analysisStatus || '',
-        analysisFilename: book.analysisFilename || '',
-      })),
-      null,
-      2
-    );
-    const blob = new Blob([content], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'songbook-catalog.json';
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function importCatalog(file) {
-    const text = await file.text();
-    const parsed = JSON.parse(text);
-    const previousBooks = books;
-    const imported = parsed.map((book) => ({
-      id: uid('book'),
-      title: book.title,
-      internalTitle: book.internalTitle || '',
-      fileName: book.fileName,
-      pageCount: book.pageCount,
-      songs: (book.songs || []).map((song) => ({
-        id: uid('song'),
-        title: song.title,
-        page: song.page,
-      })),
-      analysisHandle: book.analysisHandle || '',
-      analysisStatus: book.analysisStatus || '',
-      analysisFilename: book.analysisFilename || '',
-      file: null,
-      url: null,
-      missingFile: true,
-    }));
-    await clearPdfFiles();
-    revokeBookUrls(previousBooks);
-    setBooks(imported);
-    navigate(imported[0] ? `/books/${imported[0].id}` : '/');
-  }
-
   async function handleClear() {
     revokeBookUrls(books);
     await clearPdfFiles();
@@ -1309,11 +1246,8 @@ export default function App() {
               authSession={authSession}
               importStatus={importStatus}
               fileInputRef={fileInputRef}
-              catalogInputRef={catalogInputRef}
               onAddFolder={handleAddFolder}
               onFilesChosen={handleFilesChosen}
-              onExportCatalog={exportCatalog}
-              onImportCatalog={importCatalog}
               onClear={handleClear}
               onDeleteBook={handleDeleteBook}
               onReorderBooks={reorderBooks}

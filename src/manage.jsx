@@ -335,17 +335,42 @@ function AuthOverlay({
   );
 }
 
+function ConfirmClearOverlay({ bookCount, dangerGhostButtonClass, secondaryButtonClass, onClose, onConfirm }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="text-base font-semibold text-slate-900">Clear library?</div>
+          <div className="mt-1 text-sm text-slate-500">
+            This removes {bookCount} book{bookCount === 1 ? '' : 's'} from your device and clears the saved PDFs.
+          </div>
+        </div>
+        <div className="flex flex-col gap-4 px-5 py-5">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            This cannot be undone.
+          </div>
+          <div className="flex justify-end gap-2">
+            <button className={secondaryButtonClass} onClick={onClose} type="button">
+              Cancel
+            </button>
+            <button className={dangerGhostButtonClass} onClick={onConfirm} type="button">
+              Clear library
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ManagePage({
   books,
   isRestoringFiles,
   authSession,
   importStatus,
   fileInputRef,
-  catalogInputRef,
   onAddFolder,
   onFilesChosen,
-  onExportCatalog,
-  onImportCatalog,
   onClear,
   onDeleteBook,
   onReorderBooks,
@@ -390,6 +415,7 @@ export default function ManagePage({
   const [draggedBookId, setDraggedBookId] = useState(null);
   const [renamingBookId, setRenamingBookId] = useState(null);
   const [renamingTitle, setRenamingTitle] = useState('');
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   useEffect(() => {
     setCollapsedBooks((current) => {
@@ -497,6 +523,19 @@ export default function ManagePage({
         />
       ) : null}
 
+      {showClearConfirm ? (
+        <ConfirmClearOverlay
+          bookCount={books.length}
+          dangerGhostButtonClass={dangerGhostButtonClass}
+          secondaryButtonClass={secondaryButtonClass}
+          onClose={() => setShowClearConfirm(false)}
+          onConfirm={() => {
+            setShowClearConfirm(false);
+            onClear();
+          }}
+        />
+      ) : null}
+
       <ImportStatusPane
         status={importStatus}
         onDismiss={onDismissImportStatus}
@@ -534,13 +573,11 @@ export default function ManagePage({
           <button className={secondaryButtonClass} onClick={() => fileInputRef.current?.click()}>
             Import Songbooks
           </button>
-          <button className={secondaryButtonClass} onClick={onExportCatalog} disabled={!books.length}>
-            Export catalog
-          </button>
-          <button className={secondaryButtonClass} onClick={() => catalogInputRef.current?.click()}>
-            Import catalog
-          </button>
-          <button className={`${dangerGhostButtonClass} sm:col-span-2`} onClick={onClear} disabled={!books.length}>
+          <button
+            className={`${dangerGhostButtonClass} sm:col-span-2`}
+            onClick={() => setShowClearConfirm(true)}
+            disabled={!books.length}
+          >
             Clear library
           </button>
         </div>
@@ -552,13 +589,6 @@ export default function ManagePage({
           multiple
           className="hidden"
           onChange={(e) => onFilesChosen(e.target.files)}
-        />
-        <input
-          ref={catalogInputRef}
-          type="file"
-          accept="application/json"
-          className="hidden"
-          onChange={(e) => e.target.files?.[0] && onImportCatalog(e.target.files[0])}
         />
       </PageFrame>
 
@@ -665,6 +695,16 @@ export default function ManagePage({
                       >
                         ≡
                       </div>
+                    ) : null}
+                    {!book.missingFile && book.url ? (
+                      <a
+                        className="inline-flex h-6 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                        href={book.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open PDF
+                      </a>
                     ) : null}
                     <button
                       className="inline-flex h-6 items-center justify-center rounded-md border border-rose-300 bg-white px-2 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
