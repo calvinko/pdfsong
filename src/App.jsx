@@ -24,7 +24,8 @@ const DB_VERSION = 1;
 const FILE_STORE = 'pdfs';
 const API_BASE_URL = 'https://biblecircle.org/kapi';
 
-const panelClass = 'rounded-2xl border border-slate-200 bg-white shadow-sm';
+const lyricsPanelClass = 'rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600';
+const panelClass = 'panel rounded-2xl border border-slate-200 bg-white shadow-sm';
 const panelHeaderClass = 'border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900';
 const panelBodyClass = 'p-0';
 const emptyPanelClass = 'rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600';
@@ -725,7 +726,7 @@ function SongListPage({ books }) {
               <Link
                 key={song.id}
                 to={`/books/${book.id}/songs/${song.id}`}
-                className="flex items-baseline justify-between gap-3 py-2 text-sm transition hover:bg-slate-50"
+                className="flex items-baseline justify-between gap-3 px-2 py-2 text-sm transition hover:bg-slate-50"
               >
                 <span className="min-w-0 truncate font-medium text-slate-900">{song.title}</span>
                 <span className="shrink-0 text-xs text-slate-500">p. {song.page}</span>
@@ -1293,7 +1294,7 @@ export default function App() {
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
+    <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-1 lg:px-8">
       <AppHeader />
 
       <Routes>
