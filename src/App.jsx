@@ -1294,7 +1294,7 @@ export default function App() {
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-5xl px-4 py-6 text-slate-900 sm:px-1 lg:px-8">
+    <div className="mx-auto min-h-screen max-w-5xl px-1 py-6 text-slate-900 md:px-4 lg:px-8">
       <AppHeader />
 
       <Routes>
