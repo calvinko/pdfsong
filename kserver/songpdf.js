@@ -5,9 +5,11 @@ import path from 'node:path';
 import multer from 'multer';
 import { extractSongbookIndexFromPdf } from './genindex-gpt.js';
 import { readAnalysisStore, updateAnalysisRecord } from './analysis-store.js';
+import { requireAuth } from './auth.js';
 
 const router = express.Router();
 const uploadsDir = path.resolve('uploads');
+const backupsDir = path.resolve(uploadsDir, 'backups');
 
 const upload = multer({
   dest: uploadsDir,
@@ -99,6 +101,75 @@ router.post('/analyze', upload.single('pdf'), async (req, res) => {
     res.status(500).json({
       error: error?.message || 'Failed to store uploaded PDF for analysis.'
     });
+  }
+});
+
+router.post('/backup', requireAuth, upload.single('pdf'), async (req, res) => {
+  const uploadedPath = req.file?.path || null;
+
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        error: 'Upload a PDF file using the pdf form-data field.'
+      });
+    }
+
+    const userUuid = String(req.auth?.userUuid || '').trim();
+
+    if (!userUuid) {
+      return res.status(401).json({
+        error: 'Authenticated user is missing a user UUID.'
+      });
+    }
+
+    const originalFilename = path.basename(req.file.originalname || 'songbook.pdf');
+    const userBackupDir = path.join(backupsDir, userUuid);
+    const backupPdfPath = path.join(userBackupDir, originalFilename);
+    const backupMetaPath = `${backupPdfPath}.json`;
+    const songs = (() => {
+      try {
+        const parsed = JSON.parse(String(req.body.songs || '[]'));
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    await fs.mkdir(userBackupDir, { recursive: true });
+    await fs.copyFile(req.file.path, backupPdfPath);
+    await fs.writeFile(
+      backupMetaPath,
+      JSON.stringify(
+        {
+          title: String(req.body.title || '').trim() || originalFilename,
+          internalTitle: String(req.body.internalTitle || '').trim(),
+          fileName: originalFilename,
+          pageCount: Number(req.body.pageCount) || null,
+          songCount: Number(req.body.songCount) || songs.length,
+          songs,
+          userUuid,
+          backedUpAt: new Date().toISOString()
+        },
+        null,
+        2
+      )
+    );
+
+    res.json({
+      ok: true,
+      route: 'songpdf/backup',
+      filename: originalFilename,
+      userUuid
+    });
+  } catch (error) {
+    console.error('Song PDF backup failed:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to back up uploaded PDF.'
+    });
+  } finally {
+    if (uploadedPath) {
+      fs.unlink(uploadedPath).catch(() => {});
+    }
   }
 });
 

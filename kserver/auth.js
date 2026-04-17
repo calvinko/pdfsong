@@ -3,6 +3,26 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'node:crypto';
 
+export function verifyToken(token) {
+  return jwt.verify(token, process.env.JWT_SECRET);
+}
+
+export function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const [scheme, token] = authHeader.split(' ');
+
+  if (scheme !== 'Bearer' || !token) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+
+  try {
+    req.auth = verifyToken(token);
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired session.' });
+  }
+}
+
 export function signToken(user) {
   return jwt.sign(
     {

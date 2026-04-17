@@ -1,6 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+const COLLAPSED_BOOKS_STORAGE_KEY = 'songbook-pwa-manage-collapsed-v1';
+
+function loadCollapsedBooks() {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_BOOKS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCollapsedBooks(collapsedBooks) {
+  localStorage.setItem(COLLAPSED_BOOKS_STORAGE_KEY, JSON.stringify(collapsedBooks));
+}
+
 function SectionNotice({ panelClass }) {
   return (
     <div className={`${panelClass} mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600`}>
@@ -363,6 +379,36 @@ function ConfirmClearOverlay({ bookCount, dangerGhostButtonClass, secondaryButto
   );
 }
 
+function ConfirmDeleteBookOverlay({ book, dangerGhostButtonClass, secondaryButtonClass, onClose, onConfirm }) {
+  if (!book) return null;
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="text-base font-semibold text-slate-900">Delete book?</div>
+          <div className="mt-1 text-sm text-slate-500">
+            <span className="font-medium text-slate-700">{book.title}</span> will be removed from your library and its saved PDF will be deleted.
+          </div>
+        </div>
+        <div className="flex flex-col gap-4 px-5 py-5">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            This cannot be undone.
+          </div>
+          <div className="flex justify-end gap-2">
+            <button className={secondaryButtonClass} onClick={onClose} type="button">
+              Cancel
+            </button>
+            <button className={dangerGhostButtonClass} onClick={onConfirm} type="button">
+              Delete book
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ManagePage({
   books,
   isRestoringFiles,
@@ -371,6 +417,7 @@ export default function ManagePage({
   fileInputRef,
   onAddFolder,
   onFilesChosen,
+  onBackupSongbooks,
   onClear,
   onDeleteBook,
   onReorderBooks,
@@ -409,25 +456,33 @@ export default function ManagePage({
   const [authSuccess, setAuthSuccess] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [showAuthOverlay, setShowAuthOverlay] = useState(false);
-  const [collapsedBooks, setCollapsedBooks] = useState({});
+  const [collapsedBooks, setCollapsedBooks] = useState(() => loadCollapsedBooks());
   const [editingBooks, setEditingBooks] = useState({});
   const [arrangeMode, setArrangeMode] = useState(false);
   const [draggedBookId, setDraggedBookId] = useState(null);
   const [renamingBookId, setRenamingBookId] = useState(null);
   const [renamingTitle, setRenamingTitle] = useState('');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [bookPendingDelete, setBookPendingDelete] = useState(null);
+  const [backupSubmitting, setBackupSubmitting] = useState(false);
+  const [backupStatus, setBackupStatus] = useState(null);
+  const [pendingBackupAfterAuth, setPendingBackupAfterAuth] = useState(false);
 
   useEffect(() => {
     setCollapsedBooks((current) => {
       const next = {};
 
       books.forEach((book) => {
-        next[book.id] = current[book.id] ?? false;
+        next[book.id] = current[book.id] ?? true;
       });
 
       return next;
     });
   }, [books]);
+
+  useEffect(() => {
+    saveCollapsedBooks(collapsedBooks);
+  }, [collapsedBooks]);
 
   function startRenamingBook(book) {
     setRenamingBookId(book.id);
@@ -483,10 +538,61 @@ export default function ManagePage({
       setAuthSuccess(authMode === 'register' ? 'Registration successful.' : 'Login successful.');
       setAuthForm((current) => ({ ...current, password: '' }));
       setShowAuthOverlay(false);
+
+      if (pendingBackupAfterAuth) {
+        setPendingBackupAfterAuth(false);
+        setBackupSubmitting(true);
+        setBackupStatus(null);
+
+        try {
+          const result = await onBackupSongbooks(session);
+          setBackupStatus({
+            tone: 'success',
+            message: `Backed up ${result.backedUp} songbook${result.backedUp === 1 ? '' : 's'}${result.skipped ? ` · skipped ${result.skipped} without local PDFs` : ''}.`
+          });
+        } catch (error) {
+          setBackupStatus({
+            tone: 'error',
+            message: error.message || 'Unable to back up songbooks.'
+          });
+        } finally {
+          setBackupSubmitting(false);
+        }
+      }
     } catch (error) {
       setAuthError(error.message || 'Authentication failed.');
     } finally {
       setAuthSubmitting(false);
+    }
+  }
+
+  async function handleBackupClick() {
+    setBackupStatus(null);
+
+    if (!authSession) {
+      setPendingBackupAfterAuth(true);
+      setAuthMode('login');
+      setAuthError('');
+      setAuthSuccess('Log in or register to back up your songbooks.');
+      setShowAuthOverlay(true);
+      return;
+    }
+
+    setBackupSubmitting(true);
+
+    try {
+      const result = await onBackupSongbooks(authSession);
+      setBackupStatus({
+        tone: 'success',
+        message: `Backed up ${result.backedUp} songbook${result.backedUp === 1 ? '' : 's'}${result.skipped ? ` · skipped ${result.skipped} without local PDFs` : ''}.`
+      });
+    } catch (error) {
+      setBackupStatus({
+        tone: 'error',
+        message: error.message || 'Unable to back up songbooks.'
+      });
+    } finally {
+      setBackupSubmitting(false);
     }
   }
 
@@ -508,10 +614,12 @@ export default function ManagePage({
             setShowAuthOverlay(false);
             setAuthError('');
             setAuthSuccess('');
+            setPendingBackupAfterAuth(false);
           }}
           onLogout={() => {
             onLogout();
             setShowAuthOverlay(false);
+            setPendingBackupAfterAuth(false);
           }}
           onAuthModeChange={(mode) => {
             setAuthMode(mode);
@@ -536,6 +644,20 @@ export default function ManagePage({
         />
       ) : null}
 
+      {bookPendingDelete ? (
+        <ConfirmDeleteBookOverlay
+          book={bookPendingDelete}
+          dangerGhostButtonClass={dangerGhostButtonClass}
+          secondaryButtonClass={secondaryButtonClass}
+          onClose={() => setBookPendingDelete(null)}
+          onConfirm={() => {
+            const book = bookPendingDelete;
+            setBookPendingDelete(null);
+            onDeleteBook(book);
+          }}
+        />
+      ) : null}
+
       <ImportStatusPane
         status={importStatus}
         onDismiss={onDismissImportStatus}
@@ -550,7 +672,7 @@ export default function ManagePage({
 
       <PageFrame
         title="Manage Library"
-        subtitle="Import, export, add books, and add songs from one place"
+        subtitle="Import, back up, add books, and add songs from one place"
         headerAction={
           <button
             className={secondaryButtonClass}
@@ -574,6 +696,13 @@ export default function ManagePage({
             Import Songbooks
           </button>
           <button
+            className={secondaryButtonClass}
+            onClick={handleBackupClick}
+            disabled={!books.length || backupSubmitting}
+          >
+            {backupSubmitting ? 'Backing up…' : 'Back up Songbooks'}
+          </button>
+          <button
             className={`${dangerGhostButtonClass} sm:col-span-2`}
             onClick={() => setShowClearConfirm(true)}
             disabled={!books.length}
@@ -581,6 +710,18 @@ export default function ManagePage({
             Clear library
           </button>
         </div>
+
+        {backupStatus ? (
+          <div
+            className={`mt-4 rounded-xl px-4 py-3 text-sm ${
+              backupStatus.tone === 'error'
+                ? 'border border-rose-200 bg-rose-50 text-rose-700'
+                : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+            }`}
+          >
+            {backupStatus.message}
+          </div>
+        ) : null}
 
         <input
           ref={fileInputRef}
@@ -708,7 +849,7 @@ export default function ManagePage({
                     ) : null}
                     <button
                       className="inline-flex h-6 items-center justify-center rounded-md border border-rose-300 bg-white px-2 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
-                      onClick={() => onDeleteBook(book)}
+                      onClick={() => setBookPendingDelete(book)}
                     >
                       Delete
                     </button>

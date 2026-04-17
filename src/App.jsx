@@ -248,6 +248,25 @@ async function uploadBookForAnalysis(book, authSession) {
   });
 }
 
+async function backupBookUpload(book, authSession) {
+  if (!book.file) {
+    throw new Error('This book needs its PDF file before it can be backed up.');
+  }
+
+  const formData = new FormData();
+  formData.append('pdf', book.file, book.fileName || book.file.name || `${book.title}.pdf`);
+  formData.append('title', book.title || '');
+  formData.append('internalTitle', book.internalTitle || '');
+  formData.append('pageCount', `${book.pageCount || ''}`);
+  formData.append('songCount', `${Array.isArray(book.songs) ? book.songs.length : 0}`);
+  formData.append('songs', JSON.stringify(Array.isArray(book.songs) ? book.songs : []));
+
+  return apiAuthedRequest('/songpdf/backup', authSession, {
+    method: 'POST',
+    body: formData,
+  });
+}
+
 async function fetchAnalysisStatus(book, authSession) {
   if (!book.analysisHandle) {
     throw new Error('Run Analyze first so this book has an analysis handle.');
@@ -1230,6 +1249,28 @@ export default function App() {
     }
   }
 
+  async function handleBackupSongbooks(sessionOverride = authSession) {
+    const activeSession = sessionOverride || authSession;
+    const backupCandidates = books.filter((book) => book.file && !book.missingFile);
+
+    if (!activeSession) {
+      throw new Error('Please log in or register before backing up your songbooks.');
+    }
+
+    if (backupCandidates.length === 0) {
+      throw new Error('No local PDF files are available to back up yet.');
+    }
+
+    for (const book of backupCandidates) {
+      await backupBookUpload(book, activeSession);
+    }
+
+    return {
+      backedUp: backupCandidates.length,
+      skipped: books.length - backupCandidates.length,
+    };
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-1 py-6 text-slate-900 md:px-4 lg:px-8">
       <AppHeader />
@@ -1248,6 +1289,7 @@ export default function App() {
               fileInputRef={fileInputRef}
               onAddFolder={handleAddFolder}
               onFilesChosen={handleFilesChosen}
+              onBackupSongbooks={handleBackupSongbooks}
               onClear={handleClear}
               onDeleteBook={handleDeleteBook}
               onReorderBooks={reorderBooks}
