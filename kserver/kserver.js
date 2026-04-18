@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { pool } from './db.js';
-import { createAuthRouter } from './auth.js';
+import { createAuthRouter, requireAuth } from './auth.js';
 import songPdfRouter from './songpdf.js';
 
 dotenv.config();
@@ -60,6 +60,53 @@ app.use(
   createAuthRouter({ pool })
 );
 app.use('/songpdf', songPdfRouter);
+
+app.post('/savelibrary', requireAuth, async (req, res) => {
+  try {
+    const userId = Number(req.auth?.sub);
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({ error: 'Authenticated user is invalid.' });
+    }
+
+    const input = req.body?.songbook_json;
+
+    if (input === undefined) {
+      return res.status(400).json({ error: 'Provide songbook_json in the request body.' });
+    }
+
+    let normalizedJson;
+
+    if (typeof input === 'string') {
+      JSON.parse(input);
+      normalizedJson = input;
+    } else {
+      normalizedJson = JSON.stringify(input);
+    }
+
+    await pool.execute(
+      `
+      INSERT INTO user_songbook_libraries (user_id, songbooks_json)
+      VALUES (?, CAST(? AS JSON))
+      ON DUPLICATE KEY UPDATE
+        songbooks_json = CAST(? AS JSON),
+        updated_at = CURRENT_TIMESTAMP
+      `,
+      [userId, normalizedJson, normalizedJson]
+    );
+
+    res.json({
+      ok: true,
+      route: '/savelibrary',
+      userId
+    });
+  } catch (error) {
+    console.error('Save library failed:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to save library.'
+    });
+  }
+});
 
 app.get('/health', async (_req, res) => {
   try {

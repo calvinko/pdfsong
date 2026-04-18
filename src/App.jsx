@@ -143,8 +143,8 @@ function clampPage(value, max) {
   return Math.min(Math.max(1, Math.round(page)), Math.max(1, max || 1));
 }
 
-function saveCatalog(books) {
-  const lightweight = books.map((book) => ({
+function serializeCatalog(books) {
+  return books.map((book) => ({
     id: book.id,
     title: book.title,
     internalTitle: book.internalTitle || '',
@@ -155,6 +155,10 @@ function saveCatalog(books) {
     analysisStatus: book.analysisStatus || '',
     analysisFilename: book.analysisFilename || '',
   }));
+}
+
+function saveCatalog(books) {
+  const lightweight = serializeCatalog(books);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
 }
 
@@ -264,6 +268,15 @@ async function backupBookUpload(book, authSession) {
   return apiAuthedRequest('/songpdf/backup', authSession, {
     method: 'POST',
     body: formData,
+  });
+}
+
+async function saveLibraryToServer(books, authSession) {
+  return apiAuthedRequest('/savelibrary', authSession, {
+    method: 'POST',
+    body: JSON.stringify({
+      songbook_json: serializeCatalog(books),
+    }),
   });
 }
 
@@ -1002,6 +1015,22 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authSession || isRestoringFiles) {
+      return undefined;
+    }
+
+    const syncTimer = window.setTimeout(() => {
+      saveLibraryToServer(books, authSession).catch((error) => {
+        console.error('Unable to save library to server:', error);
+      });
+    }, 800);
+
+    return () => {
+      window.clearTimeout(syncTimer);
+    };
+  }, [books, authSession, isRestoringFiles]);
 
   useEffect(() => {
     const knownIds = new Set(books.map((book) => book.id));

@@ -17,6 +17,58 @@ function saveCollapsedBooks(collapsedBooks) {
   localStorage.setItem(COLLAPSED_BOOKS_STORAGE_KEY, JSON.stringify(collapsedBooks));
 }
 
+function detectDeviceInfo() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+    return null;
+  }
+
+  const ua = navigator.userAgent || '';
+  const platform = navigator.userAgentData?.platform || navigator.platform || 'Unknown platform';
+  const lowerUa = ua.toLowerCase();
+  const maxTouchPoints = Number(navigator.maxTouchPoints || 0);
+  const hasTouch = maxTouchPoints > 0 || 'ontouchstart' in window;
+  const screenWidth = Number(window.screen?.width || 0);
+  const screenHeight = Number(window.screen?.height || 0);
+
+  let operatingSystem = 'Unknown OS';
+  if (lowerUa.includes('android')) operatingSystem = 'Android';
+  else if (lowerUa.includes('iphone') || lowerUa.includes('ipad') || lowerUa.includes('ipod')) operatingSystem = 'iOS';
+  else if (lowerUa.includes('mac os x') || platform.toLowerCase().includes('mac')) operatingSystem = 'macOS';
+  else if (lowerUa.includes('win')) operatingSystem = 'Windows';
+  else if (lowerUa.includes('linux') || platform.toLowerCase().includes('linux')) operatingSystem = 'Linux';
+  else if (lowerUa.includes('cros')) operatingSystem = 'ChromeOS';
+
+  let browser = 'Unknown browser';
+  if (lowerUa.includes('edg/')) browser = 'Edge';
+  else if (lowerUa.includes('opr/') || lowerUa.includes('opera')) browser = 'Opera';
+  else if (lowerUa.includes('chrome/') && !lowerUa.includes('edg/')) browser = 'Chrome';
+  else if (lowerUa.includes('safari/') && !lowerUa.includes('chrome/')) browser = 'Safari';
+  else if (lowerUa.includes('firefox/')) browser = 'Firefox';
+
+  let deviceType = 'Desktop';
+  if (navigator.userAgentData?.mobile || lowerUa.includes('mobile') || lowerUa.includes('iphone')) {
+    deviceType = 'Phone';
+  } else if (lowerUa.includes('ipad') || lowerUa.includes('tablet') || (hasTouch && screenWidth > 0 && screenWidth <= 1024)) {
+    deviceType = 'Tablet';
+  } else if (hasTouch && operatingSystem === 'Windows') {
+    deviceType = 'Touch laptop/tablet';
+  }
+
+  const brands = Array.isArray(navigator.userAgentData?.brands)
+    ? navigator.userAgentData.brands.map((entry) => entry.brand).filter(Boolean)
+    : [];
+  const machine = brands[0] || platform || operatingSystem;
+
+  return {
+    machine,
+    deviceType,
+    operatingSystem,
+    browser,
+    touch: hasTouch ? `Yes (${maxTouchPoints || 1} touch point${maxTouchPoints === 1 ? '' : 's'})` : 'No',
+    screen: screenWidth && screenHeight ? `${screenWidth} x ${screenHeight}` : 'Unknown'
+  };
+}
+
 function SectionNotice({ panelClass }) {
   return (
     <div className={`${panelClass} mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600`}>
@@ -467,6 +519,7 @@ export default function ManagePage({
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null);
   const [pendingBackupAfterAuth, setPendingBackupAfterAuth] = useState(false);
+  const [deviceInfo, setDeviceInfo] = useState(null);
 
   useEffect(() => {
     setCollapsedBooks((current) => {
@@ -483,6 +536,10 @@ export default function ManagePage({
   useEffect(() => {
     saveCollapsedBooks(collapsedBooks);
   }, [collapsedBooks]);
+
+  useEffect(() => {
+    setDeviceInfo(detectDeviceInfo());
+  }, []);
 
   function startRenamingBook(book) {
     setRenamingBookId(book.id);
@@ -720,6 +777,20 @@ export default function ManagePage({
             }`}
           >
             {backupStatus.message}
+          </div>
+        ) : null}
+
+        {deviceInfo ? (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="text-sm font-semibold text-slate-900">This device</div>
+            <div className="mt-2 grid grid-cols-1 gap-1 text-sm text-slate-600 sm:grid-cols-2">
+              <div>Type: {deviceInfo.deviceType}</div>
+              <div>Machine: {deviceInfo.machine}</div>
+              <div>OS: {deviceInfo.operatingSystem}</div>
+              <div>Browser: {deviceInfo.browser}</div>
+              <div>Touch: {deviceInfo.touch}</div>
+              <div>Screen: {deviceInfo.screen}</div>
+            </div>
           </div>
         ) : null}
 
