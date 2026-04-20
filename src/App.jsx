@@ -12,6 +12,7 @@ import {
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import ManagePage from './manage.jsx';
+import { getClientInstance } from './clientInstance.js';
 
 
 
@@ -271,11 +272,13 @@ async function backupBookUpload(book, authSession) {
   });
 }
 
-async function saveLibraryToServer(books, authSession) {
+async function saveLibraryToServer(books, authSession, clientInstance) {
   return apiAuthedRequest('/savelibrary', authSession, {
     method: 'POST',
     body: JSON.stringify({
       songbook_json: serializeCatalog(books),
+      instance_id: clientInstance?.instanceId || '',
+      device_type: clientInstance?.deviceType || clientInstance?.deviceInfo?.deviceType || '',
     }),
   });
 }
@@ -965,6 +968,7 @@ export default function App() {
   const [books, setBooks] = useState(() => loadCatalog().map(bookFromStored));
   const [isRestoringFiles, setIsRestoringFiles] = useState(true);
   const [authSession, setAuthSession] = useState(() => loadStoredAuth());
+  const [clientInstance] = useState(() => getClientInstance());
   const [importStatus, setImportStatus] = useState({
     visible: false,
     message: '',
@@ -1022,7 +1026,7 @@ export default function App() {
     }
 
     const syncTimer = window.setTimeout(() => {
-      saveLibraryToServer(books, authSession).catch((error) => {
+      saveLibraryToServer(books, authSession, clientInstance).catch((error) => {
         console.error('Unable to save library to server:', error);
       });
     }, 800);
@@ -1030,7 +1034,7 @@ export default function App() {
     return () => {
       window.clearTimeout(syncTimer);
     };
-  }, [books, authSession, isRestoringFiles]);
+  }, [books, authSession, clientInstance, isRestoringFiles]);
 
   useEffect(() => {
     const knownIds = new Set(books.map((book) => book.id));
@@ -1314,6 +1318,7 @@ export default function App() {
               books={books}
               isRestoringFiles={isRestoringFiles}
               authSession={authSession}
+              clientInstance={clientInstance}
               importStatus={importStatus}
               fileInputRef={fileInputRef}
               onAddFolder={handleAddFolder}
