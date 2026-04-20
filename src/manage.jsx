@@ -417,9 +417,12 @@ export default function ManagePage({
   clientInstance,
   importStatus,
   fileInputRef,
+  restoreInputRef,
   onAddFolder,
   onFilesChosen,
   onBackupSongbooks,
+  onBackupSongsData,
+  onRestoreSongsData,
   onClear,
   onDeleteBook,
   onReorderBooks,
@@ -469,6 +472,8 @@ export default function ManagePage({
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null);
   const [pendingBackupAfterAuth, setPendingBackupAfterAuth] = useState(false);
+  const [dataFileSubmitting, setDataFileSubmitting] = useState(false);
+  const [dataFileStatus, setDataFileStatus] = useState(null);
   const [visibleClientInstance, setVisibleClientInstance] = useState(clientInstance);
 
   useEffect(() => {
@@ -603,6 +608,51 @@ export default function ManagePage({
     }
   }
 
+  async function handleBackupSongsDataClick() {
+    setDataFileStatus(null);
+    setDataFileSubmitting(true);
+
+    try {
+      const result = await onBackupSongsData();
+      setDataFileStatus({
+        tone: 'success',
+        message: `${result.saveMethod === 'chosen-location' ? 'Saved backup file' : 'Downloaded backup file'} with ${result.backedUp} PDF${result.backedUp === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing PDF${result.missing === 1 ? '' : 's'} included as catalog only` : ''}.`
+      });
+    } catch (error) {
+      setDataFileStatus({
+        tone: 'error',
+        message: error.message || 'Unable to create backup file.'
+      });
+    } finally {
+      setDataFileSubmitting(false);
+    }
+  }
+
+  async function handleRestoreSongsDataFile(file) {
+    if (!file) return;
+
+    setDataFileStatus(null);
+    setDataFileSubmitting(true);
+
+    try {
+      const result = await onRestoreSongsData(file);
+      setDataFileStatus({
+        tone: 'success',
+        message: `Restored ${result.restored} book${result.restored === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing PDF${result.missing === 1 ? '' : 's'} restored as catalog only` : ''}.`
+      });
+    } catch (error) {
+      setDataFileStatus({
+        tone: 'error',
+        message: error.message || 'Unable to restore backup file.'
+      });
+    } finally {
+      setDataFileSubmitting(false);
+      if (restoreInputRef.current) {
+        restoreInputRef.current.value = '';
+      }
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {showAuthOverlay ? (
@@ -710,6 +760,20 @@ export default function ManagePage({
             {backupSubmitting ? 'Backing up…' : 'Back up Songbooks'}
           </button>
           <button
+            className={secondaryButtonClass}
+            onClick={handleBackupSongsDataClick}
+            disabled={!books.length || dataFileSubmitting}
+          >
+            {dataFileSubmitting ? 'Preparing…' : 'Backup Songs File'}
+          </button>
+          <button
+            className={secondaryButtonClass}
+            onClick={() => restoreInputRef.current?.click()}
+            disabled={dataFileSubmitting}
+          >
+            Restore Songs File
+          </button>
+          <button
             className={`${dangerGhostButtonClass} sm:col-span-2`}
             onClick={() => setShowClearConfirm(true)}
             disabled={!books.length}
@@ -727,6 +791,18 @@ export default function ManagePage({
             }`}
           >
             {backupStatus.message}
+          </div>
+        ) : null}
+
+        {dataFileStatus ? (
+          <div
+            className={`mt-4 rounded-xl px-4 py-3 text-sm ${
+              dataFileStatus.tone === 'error'
+                ? 'border border-rose-200 bg-rose-50 text-rose-700'
+                : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+            }`}
+          >
+            {dataFileStatus.message}
           </div>
         ) : null}
 
@@ -752,6 +828,13 @@ export default function ManagePage({
           multiple
           className="hidden"
           onChange={(e) => onFilesChosen(e.target.files)}
+        />
+        <input
+          ref={restoreInputRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => handleRestoreSongsDataFile(e.target.files?.[0])}
         />
       </PageFrame>
 

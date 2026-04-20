@@ -134,6 +134,40 @@ async function clearPdfFiles() {
   await withStore('readwrite', (store) => requestToPromise(store.clear()));
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Unable to read file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileToBase64(file) {
+  const dataUrl = await fileToDataUrl(file);
+  const [, encoded = ''] = dataUrl.split(',');
+  return encoded;
+}
+
+function base64ToFile(base64, fileName, mimeType = 'application/pdf') {
+  const binary = atob(base64);
+  const chunks = [];
+  const chunkSize = 8192;
+
+  for (let offset = 0; offset < binary.length; offset += chunkSize) {
+    const chunk = binary.slice(offset, offset + chunkSize);
+    const bytes = new Uint8Array(chunk.length);
+
+    for (let index = 0; index < chunk.length; index += 1) {
+      bytes[index] = chunk.charCodeAt(index);
+    }
+
+    chunks.push(bytes);
+  }
+
+  return new File(chunks, fileName || 'songbook.pdf', { type: mimeType });
+}
+
 function uid(prefix = 'id') {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -161,6 +195,39 @@ function serializeCatalog(books) {
 function saveCatalog(books) {
   const lightweight = serializeCatalog(books);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
+}
+
+async function saveJsonFile(data, fileName) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+
+  if (window.showSaveFilePicker) {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: fileName,
+      types: [
+        {
+          description: 'PDFSong backup file',
+          accept: {
+            'application/json': ['.json'],
+          },
+        },
+      ],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+
+    return 'chosen-location';
+  }
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+
+  return 'downloads';
 }
 
 function loadStoredAuth() {
@@ -979,6 +1046,7 @@ export default function App() {
     items: []
   });
   const fileInputRef = useRef(null);
+  const restoreInputRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -1196,6 +1264,96 @@ export default function App() {
     }
   }
 
+  async function handleBackupSongsData() {
+    if (!books.length) {
+      throw new Error('No books are available to back up.');
+    }
+
+    const pdfs = {};
+    let missingPdfCount = 0;
+
+    for (const book of books) {
+      const file = book.file || await loadPdfFile(book.id);
+
+      if (!file) {
+        missingPdfCount += 1;
+        continue;
+      }
+
+      pdfs[book.id] = {
+        fileName: book.fileName || file.name || `${book.title || 'songbook'}.pdf`,
+        mimeType: file.type || 'application/pdf',
+        size: file.size || 0,
+        dataBase64: await fileToBase64(file),
+      };
+    }
+
+    const backup = {
+      type: 'pdfsong-library-backup',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      catalog: serializeCatalog(books),
+      pdfs,
+    };
+
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const saveMethod = await saveJsonFile(backup, `pdfsong-backup-${dateStamp}.json`);
+
+    return {
+      backedUp: Object.keys(pdfs).length,
+      missing: missingPdfCount,
+      saveMethod,
+    };
+  }
+
+  async function handleRestoreSongsData(file) {
+    if (!file) return { restored: 0, missing: 0 };
+
+    const backup = JSON.parse(await file.text());
+
+    if (backup?.type !== 'pdfsong-library-backup' || !Array.isArray(backup.catalog) || !backup.pdfs) {
+      throw new Error('This does not look like a PDFSong backup file.');
+    }
+
+    const restoredBooks = [];
+    let missingPdfCount = 0;
+
+    await clearPdfFiles();
+
+    for (const storedBook of backup.catalog) {
+      const bookId = storedBook.id || uid('book');
+      const pdfEntry = backup.pdfs[storedBook.id] || backup.pdfs[bookId] || null;
+      const book = bookFromStored({
+        ...storedBook,
+        id: bookId,
+      });
+
+      if (!pdfEntry?.dataBase64) {
+        missingPdfCount += 1;
+        restoredBooks.push(book);
+        continue;
+      }
+
+      const pdfFile = base64ToFile(
+        pdfEntry.dataBase64,
+        pdfEntry.fileName || book.fileName || `${book.title || 'songbook'}.pdf`,
+        pdfEntry.mimeType || 'application/pdf'
+      );
+
+      await savePdfFile(bookId, pdfFile);
+      restoredBooks.push(attachFileToBook(book, pdfFile));
+    }
+
+    revokeBookUrls(books);
+    setBooks(restoredBooks);
+    navigate('/manage');
+
+    return {
+      restored: restoredBooks.length,
+      missing: missingPdfCount,
+    };
+  }
+
   async function handleClear() {
     revokeBookUrls(books);
     await clearPdfFiles();
@@ -1322,9 +1480,12 @@ export default function App() {
               clientInstance={clientInstance}
               importStatus={importStatus}
               fileInputRef={fileInputRef}
+              restoreInputRef={restoreInputRef}
               onAddFolder={handleAddFolder}
               onFilesChosen={handleFilesChosen}
               onBackupSongbooks={handleBackupSongbooks}
+              onBackupSongsData={handleBackupSongsData}
+              onRestoreSongsData={handleRestoreSongsData}
               onClear={handleClear}
               onDeleteBook={handleDeleteBook}
               onReorderBooks={reorderBooks}
