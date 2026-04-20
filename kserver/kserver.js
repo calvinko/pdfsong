@@ -211,7 +211,6 @@ async function getLibrary(req, res) {
 }
 
 app.get('/getlibrary', requireAuth, getLibrary);
-app.get('/getLibrary', requireAuth, getLibrary);
 
 app.get('/health', async (_req, res) => {
   try {

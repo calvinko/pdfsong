@@ -197,13 +197,14 @@ async function fileToPdfDoc(file) {
 }
 
 async function apiRequest(path, options = {}) {
+  const { headers: optionHeaders = {}, ...fetchOptions } = options;
   const defaultHeaders = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...fetchOptions,
     headers: {
       ...defaultHeaders,
-      ...(options.headers || {}),
+      ...optionHeaders,
     },
-    ...options,
   });
 
   const contentType = response.headers.get('content-type') || '';
