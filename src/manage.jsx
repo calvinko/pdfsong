@@ -410,6 +410,47 @@ function ConfirmDeleteBookOverlay({ book, dangerGhostButtonClass, secondaryButto
   );
 }
 
+function ConfirmRestoreOverlay({
+  bookCount,
+  songCount,
+  fileName,
+  dangerGhostButtonClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  onClose,
+  onMerge,
+  onOverwrite,
+}) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="text-base font-semibold text-slate-900">Restore backup?</div>
+          <div className="mt-1 text-sm text-slate-500">
+            Your library already has {bookCount} book{bookCount === 1 ? '' : 's'} and {songCount} song{songCount === 1 ? '' : 's'}.
+          </div>
+        </div>
+        <div className="flex flex-col gap-4 px-5 py-5">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Choose how to restore <span className="font-medium text-slate-800">{fileName || 'this backup file'}</span>.
+          </div>
+          <div className="flex flex-col justify-end gap-2 sm:flex-row">
+            <button className={secondaryButtonClass} onClick={onClose} type="button">
+              Cancel
+            </button>
+            <button className={primaryButtonClass} onClick={onMerge} type="button">
+              Merge
+            </button>
+            <button className={dangerGhostButtonClass} onClick={onOverwrite} type="button">
+              Overwrite
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ManagePage({
   books,
   isRestoringFiles,
@@ -474,7 +515,9 @@ export default function ManagePage({
   const [pendingBackupAfterAuth, setPendingBackupAfterAuth] = useState(false);
   const [dataFileSubmitting, setDataFileSubmitting] = useState(false);
   const [dataFileStatus, setDataFileStatus] = useState(null);
+  const [pendingRestoreFile, setPendingRestoreFile] = useState(null);
   const [visibleClientInstance, setVisibleClientInstance] = useState(clientInstance);
+  const songCount = books.reduce((total, book) => total + (Array.isArray(book.songs) ? book.songs.length : 0), 0);
 
   useEffect(() => {
     setCollapsedBooks((current) => {
@@ -628,17 +671,19 @@ export default function ManagePage({
     }
   }
 
-  async function handleRestoreSongsDataFile(file) {
+  async function handleRestoreSongsDataFile(file, restoreMode = 'overwrite') {
     if (!file) return;
 
+    setPendingRestoreFile(null);
     setDataFileStatus(null);
     setDataFileSubmitting(true);
 
     try {
-      const result = await onRestoreSongsData(file);
+      const result = await onRestoreSongsData(file, restoreMode);
+      const action = result.mode === 'merge' ? 'Merged' : 'Restored';
       setDataFileStatus({
         tone: 'success',
-        message: `Restored ${result.restored} book${result.restored === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing PDF${result.missing === 1 ? '' : 's'} restored as catalog only` : ''}.`
+        message: `${action} ${result.restored} book${result.restored === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing PDF${result.missing === 1 ? '' : 's'} restored as catalog only` : ''}.`
       });
     } catch (error) {
       setDataFileStatus({
@@ -651,6 +696,17 @@ export default function ManagePage({
         restoreInputRef.current.value = '';
       }
     }
+  }
+
+  function handleRestoreInputChange(file) {
+    if (!file) return;
+
+    if (books.length > 0 || songCount > 0) {
+      setPendingRestoreFile(file);
+      return;
+    }
+
+    handleRestoreSongsDataFile(file);
   }
 
   return (
@@ -712,6 +768,25 @@ export default function ManagePage({
             setBookPendingDelete(null);
             onDeleteBook(book);
           }}
+        />
+      ) : null}
+
+      {pendingRestoreFile ? (
+        <ConfirmRestoreOverlay
+          bookCount={books.length}
+          songCount={songCount}
+          fileName={pendingRestoreFile.name}
+          dangerGhostButtonClass={dangerGhostButtonClass}
+          primaryButtonClass={primaryButtonClass}
+          secondaryButtonClass={secondaryButtonClass}
+          onClose={() => {
+            setPendingRestoreFile(null);
+            if (restoreInputRef.current) {
+              restoreInputRef.current.value = '';
+            }
+          }}
+          onMerge={() => handleRestoreSongsDataFile(pendingRestoreFile, 'merge')}
+          onOverwrite={() => handleRestoreSongsDataFile(pendingRestoreFile, 'overwrite')}
         />
       ) : null}
 
@@ -834,7 +909,7 @@ export default function ManagePage({
           type="file"
           accept="application/json"
           className="hidden"
-          onChange={(e) => handleRestoreSongsDataFile(e.target.files?.[0])}
+          onChange={(e) => handleRestoreInputChange(e.target.files?.[0])}
         />
       </PageFrame>
 

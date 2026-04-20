@@ -1306,9 +1306,10 @@ export default function App() {
     };
   }
 
-  async function handleRestoreSongsData(file) {
+  async function handleRestoreSongsData(file, restoreMode = 'overwrite') {
     if (!file) return { restored: 0, missing: 0 };
 
+    const mode = restoreMode === 'merge' ? 'merge' : 'overwrite';
     const backup = JSON.parse(await file.text());
 
     if (backup?.type !== 'pdfsong-library-backup' || !Array.isArray(backup.catalog) || !backup.pdfs) {
@@ -1316,17 +1317,23 @@ export default function App() {
     }
 
     const restoredBooks = [];
+    const usedBookIds = new Set(mode === 'merge' ? books.map((book) => book.id) : []);
     let missingPdfCount = 0;
 
-    await clearPdfFiles();
+    if (mode === 'overwrite') {
+      await clearPdfFiles();
+    }
 
     for (const storedBook of backup.catalog) {
-      const bookId = storedBook.id || uid('book');
-      const pdfEntry = backup.pdfs[storedBook.id] || backup.pdfs[bookId] || null;
+      const storedBookId = storedBook.id || uid('book');
+      const bookId = usedBookIds.has(storedBookId) ? uid('book') : storedBookId;
+      const pdfEntry = backup.pdfs[storedBook.id] || backup.pdfs[storedBookId] || null;
       const book = bookFromStored({
         ...storedBook,
         id: bookId,
       });
+
+      usedBookIds.add(bookId);
 
       if (!pdfEntry?.dataBase64) {
         missingPdfCount += 1;
@@ -1344,13 +1351,19 @@ export default function App() {
       restoredBooks.push(attachFileToBook(book, pdfFile));
     }
 
-    revokeBookUrls(books);
-    setBooks(restoredBooks);
+    if (mode === 'merge') {
+      setBooks((current) => [...current, ...restoredBooks]);
+    } else {
+      revokeBookUrls(books);
+      setBooks(restoredBooks);
+    }
+
     navigate('/manage');
 
     return {
       restored: restoredBooks.length,
       missing: missingPdfCount,
+      mode,
     };
   }
 
