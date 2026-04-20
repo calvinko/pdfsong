@@ -829,24 +829,17 @@ export default function ManagePage({
           </button>
           <button
             className={secondaryButtonClass}
-            onClick={handleBackupClick}
-            disabled={!books.length || backupSubmitting}
-          >
-            {backupSubmitting ? 'Backing up…' : 'Back up Songbooks'}
-          </button>
-          <button
-            className={secondaryButtonClass}
             onClick={handleBackupSongsDataClick}
             disabled={!books.length || dataFileSubmitting}
           >
-            {dataFileSubmitting ? 'Preparing…' : 'Backup Songs File'}
+            {dataFileSubmitting ? 'Preparing…' : 'Backup Song Books'}
           </button>
           <button
             className={secondaryButtonClass}
             onClick={() => restoreInputRef.current?.click()}
             disabled={dataFileSubmitting}
           >
-            Restore Songs File
+            Restore Song Books
           </button>
           <button
             className={`${dangerGhostButtonClass} sm:col-span-2`}
