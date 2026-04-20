@@ -766,7 +766,7 @@ export default function ManagePage({
           onConfirm={() => {
             const book = bookPendingDelete;
             setBookPendingDelete(null);
-            onDeleteBook(book);
+            onDeleteBook(book, { navigateAfterDelete: false });
           }}
         />
       ) : null}

@@ -1374,7 +1374,7 @@ export default function App() {
     navigate('/');
   }
 
-  async function handleDeleteBook(book) {
+  async function handleDeleteBook(book, options = {}) {
     if (!book) return;
 
     if (book.url) {
@@ -1383,7 +1383,10 @@ export default function App() {
 
     await deletePdfFile(book.id);
     setBooks((current) => current.filter((entry) => entry.id !== book.id));
-    navigate('/');
+
+    if (options.navigateAfterDelete !== false) {
+      navigate('/');
+    }
   }
 
   function handleAuthSuccess(session) {
