@@ -491,6 +491,7 @@ export default function ManagePage({
   onAddFolder,
   onFilesChosen,
   onBackupSongbooks,
+  onBackupSongsData,
   onRestoreSongsData,
   onClear,
   onDeleteBook,
@@ -656,6 +657,26 @@ export default function ManagePage({
     }
   }
 
+  async function handleBackupSongsDataClick() {
+    setDataFileStatus(null);
+    setDataFileSubmitting(true);
+
+    try {
+      const result = await onBackupSongsData();
+      setDataFileStatus({
+        tone: 'success',
+        message: `${result.saveMethod === 'chosen-location' ? 'Saved backup file' : 'Downloaded backup file'} with ${result.backedUp} PDF${result.backedUp === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing PDF${result.missing === 1 ? '' : 's'} included as catalog only` : ''}.`
+      });
+    } catch (error) {
+      setDataFileStatus({
+        tone: 'error',
+        message: error.message || 'Unable to create backup file.'
+      });
+    } finally {
+      setDataFileSubmitting(false);
+    }
+  }
+
   async function handleRestoreSongsDataFile(file, restoreMode = 'overwrite') {
     if (!file) return;
 
@@ -813,6 +834,13 @@ export default function ManagePage({
           </button>
           <button className={secondaryButtonClass} onClick={() => fileInputRef.current?.click()}>
             Import Songbooks
+          </button>
+          <button
+            className={secondaryButtonClass}
+            onClick={handleBackupSongsDataClick}
+            disabled={!books.length || dataFileSubmitting}
+          >
+            {dataFileSubmitting ? 'Preparing...' : 'Backup Song Books'}
           </button>
           <button
             className={secondaryButtonClass}
