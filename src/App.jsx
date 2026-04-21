@@ -944,7 +944,7 @@ function AppHeader() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sky-700">
-            My Song Books
+            My Song Books (v1)
           </div>
           {onManagePage ? (
             <>
