@@ -9,7 +9,7 @@ import {
   useParams,
   useSearchParams,
 } from 'react-router-dom';
-import { strFromU8, unzipSync } from 'fflate';
+import { gzipSync, strFromU8, strToU8, unzipSync } from 'fflate';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import ManagePage from './manage.jsx';
@@ -365,10 +365,11 @@ async function saveSongbooksToServer(backup, authSession, onProgress) {
   const dateStamp = new Date().toISOString().slice(0, 10);
   const formData = new FormData();
   const backupJson = JSON.stringify(backup);
+  const compressedBackup = gzipSync(strToU8(backupJson));
 
   formData.append(
     'songbooks',
-    new File([backupJson], `pdfsong-backup-${dateStamp}.json`, { type: 'application/json' })
+    new File([compressedBackup], `pdfsong-backup-${dateStamp}.json.gz`, { type: 'application/gzip' })
   );
 
   return new Promise((resolve, reject) => {

@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import fs from 'node:fs/promises';
+import { promisify } from 'node:util';
+import { gunzip } from 'node:zlib';
 import multer from 'multer';
 import { pool } from './db.js';
 import { createAuthRouter, requireAuth } from './auth.js';
@@ -9,7 +11,7 @@ import songPdfRouter from './songpdf.js';
 
 dotenv.config();
 
-
+const gunzipAsync = promisify(gunzip);
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -21,12 +23,16 @@ await fs.mkdir(uploadsDir, { recursive: true });
 const songbooksUpload = multer({
   dest: uploadsDir,
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype === 'application/json' || file.originalname.toLowerCase().endsWith('.json')) {
+    const fileName = file.originalname.toLowerCase();
+    const isJson = file.mimetype === 'application/json' || fileName.endsWith('.json');
+    const isGzip = ['application/gzip', 'application/x-gzip'].includes(file.mimetype) || fileName.endsWith('.gz');
+
+    if (isJson || isGzip) {
       cb(null, true);
       return;
     }
 
-    cb(new Error('Upload a JSON backup file using the songbooks field.'));
+    cb(new Error('Upload a JSON or gzip-compressed JSON backup file using the songbooks field.'));
   }
 });
 
@@ -140,6 +146,14 @@ async function getLatestSongbooksRow(userId) {
   return rows[0] || null;
 }
 
+async function readSongbooksJson(filePath) {
+  const uploadedBuffer = await fs.readFile(filePath);
+  const isGzip = uploadedBuffer[0] === 0x1f && uploadedBuffer[1] === 0x8b;
+  const jsonBuffer = isGzip ? await gunzipAsync(uploadedBuffer) : uploadedBuffer;
+
+  return jsonBuffer.toString('utf8');
+}
+
 app.post('/saveSongbooks', requireAuth, uploadSongbooks, async (req, res) => {
   const connection = await pool.getConnection();
   const uploadedPath = req.file?.path || null;
@@ -149,10 +163,10 @@ app.post('/saveSongbooks', requireAuth, uploadSongbooks, async (req, res) => {
     if (!userId) return;
 
     if (!req.file) {
-      return res.status(400).json({ error: 'Upload a JSON backup file using the songbooks form-data field.' });
+      return res.status(400).json({ error: 'Upload a JSON or gzip-compressed JSON backup file using the songbooks form-data field.' });
     }
 
-    const normalizedJson = await fs.readFile(req.file.path, 'utf8');
+    const normalizedJson = await readSongbooksJson(req.file.path);
     const byteSize = Buffer.byteLength(normalizedJson, 'utf8');
 
     const songbooks = JSON.parse(normalizedJson);
