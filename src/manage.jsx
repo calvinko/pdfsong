@@ -230,6 +230,7 @@ function AuthOverlay({
   canBackup,
   serverBackupInfo,
   serverBackupLoading,
+  serverBackupMessage,
   loadSubmitting,
   inputClass,
   primaryButtonClass,
@@ -300,7 +301,7 @@ function AuthOverlay({
                     type="button"
                     disabled={backupSubmitting || loadSubmitting}
                   >
-                    {loadSubmitting ? 'Loading...' : 'Load songbooks'}
+                    {loadSubmitting ? 'Restoring...' : 'Restore from server'}
                   </button>
                 ) : null}
                 {serverBackupLoading ? (
@@ -309,6 +310,8 @@ function AuthOverlay({
                   <div className="mt-2 text-xs text-slate-500">
                     Server version {serverBackupInfo.songbooksVersion} · {serverBackupInfo.bookCount} book{serverBackupInfo.bookCount === 1 ? '' : 's'}
                   </div>
+                ) : serverBackupMessage ? (
+                  <div className="mt-2 text-xs text-slate-500">{serverBackupMessage}</div>
                 ) : null}
                 {backupStatus ? (
                   <div
@@ -571,6 +574,7 @@ export default function ManagePage({
   const [backupStatus, setBackupStatus] = useState(null);
   const [serverBackupInfo, setServerBackupInfo] = useState(null);
   const [serverBackupLoading, setServerBackupLoading] = useState(false);
+  const [serverBackupMessage, setServerBackupMessage] = useState('');
   const [loadSubmitting, setLoadSubmitting] = useState(false);
   const [dataFileSubmitting, setDataFileSubmitting] = useState(false);
   const [dataFileStatus, setDataFileStatus] = useState(null);
@@ -606,18 +610,25 @@ export default function ManagePage({
     if (!showAuthOverlay || !authSession) {
       setServerBackupInfo(null);
       setServerBackupLoading(false);
+      setServerBackupMessage('');
       return undefined;
     }
 
     setServerBackupLoading(true);
+    setServerBackupMessage('');
 
     onGetSavedSongbooksInfo(authSession)
       .then((backupInfo) => {
-        if (!cancelled) setServerBackupInfo(backupInfo);
+        if (cancelled) return;
+        setServerBackupInfo(backupInfo);
+        setServerBackupMessage(backupInfo ? '' : 'No server backup found.');
       })
       .catch((error) => {
         console.error('Unable to check saved songbooks:', error);
-        if (!cancelled) setServerBackupInfo(null);
+        if (!cancelled) {
+          setServerBackupInfo(null);
+          setServerBackupMessage(error.message || 'Unable to check for server backups.');
+        }
       })
       .finally(() => {
         if (!cancelled) setServerBackupLoading(false);
@@ -744,6 +755,7 @@ export default function ManagePage({
         bookCount: books.length,
         sourceFileCount: result.backedUp
       });
+      setServerBackupMessage('');
     } catch (error) {
       setBackupStatus({
         tone: 'error',
@@ -877,6 +889,7 @@ export default function ManagePage({
           canBackup={canBackupToServer}
           serverBackupInfo={serverBackupInfo}
           serverBackupLoading={serverBackupLoading}
+          serverBackupMessage={serverBackupMessage}
           loadSubmitting={loadSubmitting}
           onBackup={handleBackupClick}
           onLoad={() => handleLoadSongbooksClick()}
