@@ -18,6 +18,11 @@ function saveCollapsedBooks(collapsedBooks) {
   localStorage.setItem(COLLAPSED_BOOKS_STORAGE_KEY, JSON.stringify(collapsedBooks));
 }
 
+function formatUploadKilobytes(bytes) {
+  const kb = Math.max(0, Math.round((Number(bytes) || 0) / 1024));
+  return `${kb.toLocaleString()} kB`;
+}
+
 function SectionNotice({ panelClass }) {
   return (
     <div className={`${panelClass} mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600`}>
@@ -220,6 +225,7 @@ function AuthOverlay({
   authSuccess,
   authSubmitting,
   backupSubmitting,
+  backupProgressText,
   backupStatus,
   canBackup,
   inputClass,
@@ -281,7 +287,7 @@ function AuthOverlay({
                   type="button"
                   disabled={!canBackup || backupSubmitting}
                 >
-                  {backupSubmitting ? 'Saving...' : 'Save all books'}
+                  {backupSubmitting ? backupProgressText || 'Saving...' : 'Save all books'}
                 </button>
                 {backupStatus ? (
                   <div
@@ -538,6 +544,7 @@ export default function ManagePage({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [bookPendingDelete, setBookPendingDelete] = useState(null);
   const [backupSubmitting, setBackupSubmitting] = useState(false);
+  const [backupProgressText, setBackupProgressText] = useState('');
   const [backupStatus, setBackupStatus] = useState(null);
   const [dataFileSubmitting, setDataFileSubmitting] = useState(false);
   const [dataFileStatus, setDataFileStatus] = useState(null);
@@ -655,9 +662,24 @@ export default function ManagePage({
     }
 
     setBackupSubmitting(true);
+    setBackupProgressText('Preparing...');
 
     try {
-      const result = await onSaveSongbooksToServer(authSession);
+      const result = await onSaveSongbooksToServer(authSession, (progress) => {
+        if (progress?.phase === 'preparing') {
+          setBackupProgressText('Preparing...');
+          return;
+        }
+
+        if (!progress) return;
+
+        if (progress.total) {
+          setBackupProgressText(`Saving: ${formatUploadKilobytes(progress.loaded)} / ${formatUploadKilobytes(progress.total)}`);
+          return;
+        }
+
+        setBackupProgressText(`Saving: ${formatUploadKilobytes(progress.loaded)} uploaded`);
+      });
       setBackupStatus({
         tone: 'success',
         message: `Saved ${result.backedUp} source file${result.backedUp === 1 ? '' : 's'} to server${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} saved as catalog only` : ''}${result.serverVersion ? ` · version ${result.serverVersion}` : ''}.`
@@ -669,6 +691,7 @@ export default function ManagePage({
       });
     } finally {
       setBackupSubmitting(false);
+      setBackupProgressText('');
     }
   }
 
@@ -754,6 +777,7 @@ export default function ManagePage({
             setShowAuthOverlay(false);
           }}
           backupSubmitting={backupSubmitting}
+          backupProgressText={backupProgressText}
           backupStatus={backupStatus}
           canBackup={canBackupToServer}
           onBackup={handleBackupClick}

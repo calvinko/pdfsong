@@ -361,7 +361,7 @@ async function fetchAnalysisStatus(book, authSession) {
   });
 }
 
-async function saveSongbooksToServer(backup, authSession) {
+async function saveSongbooksToServer(backup, authSession, onProgress) {
   const dateStamp = new Date().toISOString().slice(0, 10);
   const formData = new FormData();
   const backupJson = JSON.stringify(backup);
@@ -371,9 +371,45 @@ async function saveSongbooksToServer(backup, authSession) {
     new File([backupJson], `pdfsong-backup-${dateStamp}.json`, { type: 'application/json' })
   );
 
-  return apiAuthedRequest('/saveSongbooks', authSession, {
-    method: 'POST',
-    body: formData,
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', `${API_BASE_URL}/saveSongbooks`);
+
+    const token = getAuthToken(authSession);
+    if (token) {
+      request.setRequestHeader('Authorization', `Bearer ${token}`);
+    }
+
+    request.upload.onprogress = (event) => {
+      onProgress?.({
+        loaded: event.loaded,
+        total: event.lengthComputable ? event.total : null,
+      });
+    };
+
+    request.onload = () => {
+      const contentType = request.getResponseHeader('content-type') || '';
+      let payload = null;
+
+      try {
+        payload = contentType.includes('application/json') && request.responseText
+          ? JSON.parse(request.responseText)
+          : null;
+      } catch {
+        payload = null;
+      }
+
+      if (request.status >= 200 && request.status < 300) {
+        resolve(payload);
+        return;
+      }
+
+      reject(new Error(payload?.error || 'Request failed'));
+    };
+
+    request.onerror = () => reject(new Error('Unable to save songbooks to server.'));
+    request.ontimeout = () => reject(new Error('Saving songbooks timed out.'));
+    request.send(formData);
   });
 }
 
@@ -1631,15 +1667,16 @@ export default function App() {
     }
   }
 
-  async function handleSaveSongbooksToServer(sessionOverride = authSession) {
+  async function handleSaveSongbooksToServer(sessionOverride = authSession, onProgress) {
     const activeSession = sessionOverride || authSession;
 
     if (!activeSession) {
       throw new Error('Please log in or register before saving your songbooks.');
     }
 
+    onProgress?.({ phase: 'preparing' });
     const { backup, backedUp, missing } = await buildSongbooksBackup();
-    const result = await saveSongbooksToServer(backup, activeSession);
+    const result = await saveSongbooksToServer(backup, activeSession, onProgress);
 
     return {
       backedUp,
