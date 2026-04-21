@@ -13,13 +13,15 @@ const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const uploadsDir = 'uploads';
 const songbooksChunkSize = Number(process.env.SONGBOOKS_DB_CHUNK_SIZE || 512 * 1024);
+const songbooksSaveLimitBytes = 76 * 1024 * 1024;
+const songbooksSaveLimitLabel = '76 MB';
 
 await fs.mkdir(uploadsDir, { recursive: true });
 
 const songbooksUpload = multer({
   dest: uploadsDir,
   limits: {
-    fileSize: 500 * 1024 * 1024
+    fileSize: songbooksSaveLimitBytes
   },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === 'application/json' || file.originalname.toLowerCase().endsWith('.json')) {
@@ -30,6 +32,34 @@ const songbooksUpload = multer({
     cb(new Error('Upload a JSON backup file using the songbooks field.'));
   }
 });
+
+function uploadSongbooks(req, res, next) {
+  songbooksUpload.single('songbooks')(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      if (req.file?.path) {
+        fs.unlink(req.file.path).catch(() => {});
+      }
+
+      res.status(413).json({
+        error: `Cannot save to server because the backup is over ${songbooksSaveLimitLabel}.`
+      });
+      return;
+    }
+
+    if (req.file?.path) {
+      fs.unlink(req.file.path).catch(() => {});
+    }
+
+    res.status(400).json({
+      error: error.message || 'Unable to upload songbooks backup.'
+    });
+  });
+}
 const ALLOWED_ORIGINS = new Set([
   'https://pdfsong.vercel.app',
   'https://mysong.kosolution.net',
@@ -124,7 +154,7 @@ async function getLatestSongbooksRow(userId) {
   return rows[0] || null;
 }
 
-app.post('/saveSongbooks', requireAuth, songbooksUpload.single('songbooks'), async (req, res) => {
+app.post('/saveSongbooks', requireAuth, uploadSongbooks, async (req, res) => {
   const connection = await pool.getConnection();
   const uploadedPath = req.file?.path || null;
 
@@ -137,6 +167,14 @@ app.post('/saveSongbooks', requireAuth, songbooksUpload.single('songbooks'), asy
     }
 
     const normalizedJson = await fs.readFile(req.file.path, 'utf8');
+    const byteSize = Buffer.byteLength(normalizedJson, 'utf8');
+
+    if (byteSize > songbooksSaveLimitBytes) {
+      return res.status(413).json({
+        error: `Cannot save to server because the backup is over ${songbooksSaveLimitLabel}.`
+      });
+    }
+
     const songbooks = JSON.parse(normalizedJson);
 
     if (
@@ -187,7 +225,7 @@ app.post('/saveSongbooks', requireAuth, songbooksUpload.single('songbooks'), asy
         exportedAt,
         bookCount,
         sourceFileCount,
-        Buffer.byteLength(normalizedJson, 'utf8'),
+        byteSize,
         chunks.length
       ]
     );
