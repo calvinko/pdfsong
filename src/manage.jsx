@@ -273,7 +273,7 @@ function AuthOverlay({
               <div className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="text-sm font-semibold text-slate-900">Server backup</div>
                 <div className="mt-1 text-sm text-slate-500">
-                  Upload all available PDF books and song catalogs to your account.
+                  Upload the full songbook backup JSON, including source files and catalog, to your account.
                 </div>
                 <button
                   className={`${primaryButtonClass} mt-3 w-full`}
@@ -281,7 +281,7 @@ function AuthOverlay({
                   type="button"
                   disabled={!canBackup || backupSubmitting}
                 >
-                  {backupSubmitting ? 'Backing up...' : 'Back up all books'}
+                  {backupSubmitting ? 'Saving...' : 'Save all books'}
                 </button>
                 {backupStatus ? (
                   <div
@@ -488,7 +488,7 @@ export default function ManagePage({
   fileInputRef,
   restoreInputRef,
   onFilesChosen,
-  onBackupSongbooks,
+  onSaveSongbooksToServer,
   onBackupSongsData,
   onRestoreSongsData,
   onClear,
@@ -544,7 +544,7 @@ export default function ManagePage({
   const [pendingRestoreFile, setPendingRestoreFile] = useState(null);
   const [visibleClientInstance, setVisibleClientInstance] = useState(clientInstance);
   const songCount = books.reduce((total, book) => total + (Array.isArray(book.songs) ? book.songs.length : 0), 0);
-  const canBackupToServer = books.some((book) => book.format !== 'epub' && !book.missingFile);
+  const canBackupToServer = books.length > 0;
 
   useEffect(() => {
     setCollapsedBooks((current) => {
@@ -649,7 +649,7 @@ export default function ManagePage({
     if (!authSession) {
       setAuthMode('login');
       setAuthError('');
-      setAuthSuccess('Log in or register to back up your songbooks.');
+      setAuthSuccess('Log in or register to save your songbooks.');
       setShowAuthOverlay(true);
       return;
     }
@@ -657,15 +657,15 @@ export default function ManagePage({
     setBackupSubmitting(true);
 
     try {
-      const result = await onBackupSongbooks(authSession);
+      const result = await onSaveSongbooksToServer(authSession);
       setBackupStatus({
         tone: 'success',
-        message: `Backed up ${result.backedUp} songbook${result.backedUp === 1 ? '' : 's'}${result.skipped ? ` · skipped ${result.skipped} without local PDFs` : ''}.`
+        message: `Saved ${result.backedUp} source file${result.backedUp === 1 ? '' : 's'} to server${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} saved as catalog only` : ''}${result.serverVersion ? ` · version ${result.serverVersion}` : ''}.`
       });
     } catch (error) {
       setBackupStatus({
         tone: 'error',
-        message: error.message || 'Unable to back up songbooks.'
+        message: error.message || 'Unable to save songbooks to server.'
       });
     } finally {
       setBackupSubmitting(false);

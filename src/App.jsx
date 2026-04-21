@@ -347,39 +347,6 @@ async function uploadBookForAnalysis(book, authSession) {
   });
 }
 
-async function backupBookUpload(book, authSession) {
-  if (!book.file) {
-    throw new Error('This book needs its PDF file before it can be backed up.');
-  }
-  if (book.format === 'epub' || !isPdfFile(book.file)) {
-    throw new Error('Only PDF songbooks can be backed up to the server.');
-  }
-
-  const formData = new FormData();
-  formData.append('pdf', book.file, book.fileName || book.file.name || `${book.title}.pdf`);
-  formData.append('title', book.title || '');
-  formData.append('internalTitle', book.internalTitle || '');
-  formData.append('pageCount', `${book.pageCount || ''}`);
-  formData.append('songCount', `${Array.isArray(book.songs) ? book.songs.length : 0}`);
-  formData.append('songs', JSON.stringify(Array.isArray(book.songs) ? book.songs : []));
-
-  return apiAuthedRequest('/songpdf/backup', authSession, {
-    method: 'POST',
-    body: formData,
-  });
-}
-
-async function saveLibraryToServer(books, authSession, clientInstance) {
-  return apiAuthedRequest('/savelibrary', authSession, {
-    method: 'POST',
-    body: JSON.stringify({
-      songbook_json: serializeCatalog(books),
-      instance_id: clientInstance?.instanceId || '',
-      device_type: clientInstance?.deviceType || clientInstance?.deviceInfo?.deviceType || '',
-    }),
-  });
-}
-
 async function fetchAnalysisStatus(book, authSession) {
   if (!book.analysisHandle) {
     throw new Error('Run Analyze first so this book has an analysis handle.');
@@ -391,6 +358,15 @@ async function fetchAnalysisStatus(book, authSession) {
   });
   return apiAuthedRequest(`/songpdf/getstatus?${query.toString()}`, authSession, {
     cache: 'no-store'
+  });
+}
+
+async function saveSongbooksToServer(backup, authSession) {
+  return apiAuthedRequest('/saveSongbooks', authSession, {
+    method: 'POST',
+    body: JSON.stringify({
+      songbooks_json: backup,
+    }),
   });
 }
 
@@ -882,23 +858,6 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
   return books;
 }
 
-async function pickFolderFiles() {
-  if (!window.showDirectoryPicker) {
-    throw new Error('Folder picker is not supported in this browser. Use “Import Songbooks” instead.');
-  }
-
-  const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
-  const files = [];
-
-  for await (const [, handle] of dirHandle.entries()) {
-    if (handle.kind === 'file' && /\.(pdf|epub)$/i.test(handle.name)) {
-      files.push(await handle.getFile());
-    }
-  }
-
-  return files;
-}
-
 function TopIconLink({ to, active, label, children }) {
   return (
     <Link
@@ -1344,22 +1303,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!authSession || isRestoringFiles) {
-      return undefined;
-    }
-
-    const syncTimer = window.setTimeout(() => {
-      saveLibraryToServer(books, authSession, clientInstance).catch((error) => {
-        console.error('Unable to save library to server:', error);
-      });
-    }, 800);
-
-    return () => {
-      window.clearTimeout(syncTimer);
-    };
-  }, [books, authSession, clientInstance, isRestoringFiles]);
-
-  useEffect(() => {
     const knownIds = new Set(books.map((book) => book.id));
 
     withStore('readwrite', async (store) => {
@@ -1399,44 +1342,6 @@ export default function App() {
       next.splice(targetIndex, 0, moved);
       return next;
     });
-  }
-
-  async function handleAddFolder() {
-    try {
-      const files = await pickFolderFiles();
-      setImportStatus({
-        visible: true,
-        message: 'Preparing songbook import...',
-        total: 0,
-        processed: 0,
-        currentFile: '',
-        items: []
-      });
-      const newBooks = await booksFromFiles(files, books, (next) => {
-        setImportStatus((current) => {
-          const value = typeof next === 'function' ? next(current) : next;
-          return {
-            visible: true,
-            message: `Importing songbooks${value.total ? ` (${value.processed}/${value.total})` : ''}...`,
-            ...value
-          };
-        });
-      });
-      setBooks((current) => sortBooksByTitle([...current, ...newBooks]));
-      setImportStatus((current) => ({
-        ...current,
-        visible: true,
-        currentFile: '',
-        message: `Import finished. Added ${newBooks.length} book${newBooks.length === 1 ? '' : 's'}.`
-      }));
-      navigate('/');
-    } catch (error) {
-      setImportStatus((current) => ({
-        ...current,
-        visible: true,
-        message: error.message || 'Unable to load folder.'
-      }));
-    }
   }
 
   async function handleFilesChosen(fileList) {
@@ -1518,7 +1423,7 @@ export default function App() {
     }
   }
 
-  async function handleBackupSongsData() {
+  async function buildSongbooksBackup() {
     if (!books.length) {
       throw new Error('No books are available to back up.');
     }
@@ -1542,20 +1447,28 @@ export default function App() {
       };
     }
 
-    const backup = {
-      type: 'pdfsong-library-backup',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      catalog: serializeCatalog(books),
-      pdfs,
+    return {
+      backup: {
+        type: 'pdfsong-library-backup',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        catalog: serializeCatalog(books),
+        pdfs,
+      },
+      backedUp: Object.keys(pdfs).length,
+      missing: missingPdfCount,
     };
+  }
+
+  async function handleBackupSongsData() {
+    const { backup, backedUp, missing } = await buildSongbooksBackup();
 
     const dateStamp = new Date().toISOString().slice(0, 10);
     const saveMethod = await saveJsonFile(backup, `pdfsong-backup-${dateStamp}.json`);
 
     return {
-      backedUp: Object.keys(pdfs).length,
-      missing: missingPdfCount,
+      backedUp,
+      missing,
       saveMethod,
     };
   }
@@ -1711,25 +1624,21 @@ export default function App() {
     }
   }
 
-  async function handleBackupSongbooks(sessionOverride = authSession) {
+  async function handleSaveSongbooksToServer(sessionOverride = authSession) {
     const activeSession = sessionOverride || authSession;
-    const backupCandidates = books.filter((book) => book.file && !book.missingFile && book.format !== 'epub' && isPdfFile(book.file));
 
     if (!activeSession) {
-      throw new Error('Please log in or register before backing up your songbooks.');
+      throw new Error('Please log in or register before saving your songbooks.');
     }
 
-    if (backupCandidates.length === 0) {
-      throw new Error('No local PDF files are available to back up yet.');
-    }
-
-    for (const book of backupCandidates) {
-      await backupBookUpload(book, activeSession);
-    }
+    const { backup, backedUp, missing } = await buildSongbooksBackup();
+    const result = await saveSongbooksToServer(backup, activeSession);
 
     return {
-      backedUp: backupCandidates.length,
-      skipped: books.length - backupCandidates.length,
+      backedUp,
+      missing,
+      serverVersion: result?.songbooksVersion,
+      id: result?.id,
     };
   }
 
@@ -1752,7 +1661,7 @@ export default function App() {
               fileInputRef={fileInputRef}
               restoreInputRef={restoreInputRef}
               onFilesChosen={handleFilesChosen}
-              onBackupSongbooks={handleBackupSongbooks}
+              onSaveSongbooksToServer={handleSaveSongbooksToServer}
               onBackupSongsData={handleBackupSongsData}
               onRestoreSongsData={handleRestoreSongsData}
               onClear={handleClear}

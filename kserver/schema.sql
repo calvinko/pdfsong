@@ -57,19 +57,19 @@ CREATE TABLE IF NOT EXISTS user_songbooks (
     ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE IF NOT EXISTS user_songbook_libraries (
+CREATE TABLE IF NOT EXISTS user_songbooks_data (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NOT NULL,
-  library_version INT UNSIGNED NOT NULL,
-  client_instance_id VARCHAR(80) NULL,
-  device_type VARCHAR(80) NULL,
+  songbooks_version INT UNSIGNED NOT NULL,
+  exported_at DATETIME NULL,
+  book_count INT UNSIGNED NOT NULL DEFAULT 0,
+  source_file_count INT UNSIGNED NOT NULL DEFAULT 0,
   songbooks_json JSON NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_user_songbook_libraries_user_version (user_id, library_version),
-  KEY idx_user_songbook_libraries_client_instance (user_id, client_instance_id),
-  KEY idx_user_songbook_libraries_user_created (user_id, created_at),
-  CONSTRAINT fk_user_songbook_libraries_user
+  UNIQUE KEY uq_user_songbooks_data_user_version (user_id, songbooks_version),
+  KEY idx_user_songbooks_data_user_created (user_id, created_at),
+  CONSTRAINT fk_user_songbooks_data_user
     FOREIGN KEY (user_id) REFERENCES users(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB;
