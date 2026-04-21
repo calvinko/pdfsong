@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'node:fs/promises';
+import multer from 'multer';
 import { pool } from './db.js';
 import { createAuthRouter, requireAuth } from './auth.js';
 import songPdfRouter from './songpdf.js';
@@ -9,6 +11,24 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
+const uploadsDir = 'uploads';
+
+await fs.mkdir(uploadsDir, { recursive: true });
+
+const songbooksUpload = multer({
+  dest: uploadsDir,
+  limits: {
+    fileSize: 500 * 1024 * 1024
+  },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'application/json' || file.originalname.toLowerCase().endsWith('.json')) {
+      cb(null, true);
+      return;
+    }
+
+    cb(new Error('Upload a JSON backup file using the songbooks field.'));
+  }
+});
 const ALLOWED_ORIGINS = new Set([
   'https://pdfsong.vercel.app',
   'https://mysong.kosolution.net',
@@ -72,32 +92,20 @@ function getAuthenticatedUserId(req, res) {
   return userId;
 }
 
-function normalizeJsonColumn(value) {
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return value;
-    }
-  }
-
-  return value;
-}
-
-app.post('/saveSongbooks', requireAuth, async (req, res) => {
+app.post('/saveSongbooks', requireAuth, songbooksUpload.single('songbooks'), async (req, res) => {
   const connection = await pool.getConnection();
+  const uploadedPath = req.file?.path || null;
 
   try {
     const userId = getAuthenticatedUserId(req, res);
     if (!userId) return;
 
-    const input = req.body?.songbooks_json;
-
-    if (input === undefined) {
-      return res.status(400).json({ error: 'Provide songbooks_json in the request body.' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'Upload a JSON backup file using the songbooks form-data field.' });
     }
 
-    const songbooks = typeof input === 'string' ? JSON.parse(input) : input;
+    const normalizedJson = await fs.readFile(req.file.path, 'utf8');
+    const songbooks = JSON.parse(normalizedJson);
 
     if (
       songbooks?.type !== 'pdfsong-library-backup' ||
@@ -108,7 +116,6 @@ app.post('/saveSongbooks', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'songbooks_json must be a PDFSong backup JSON object.' });
     }
 
-    const normalizedJson = JSON.stringify(songbooks);
     const exportedAtDate = songbooks.exportedAt ? new Date(songbooks.exportedAt) : null;
     const exportedAt = exportedAtDate && !Number.isNaN(exportedAtDate.valueOf())
       ? exportedAtDate.toISOString().slice(0, 19).replace('T', ' ')
@@ -160,6 +167,9 @@ app.post('/saveSongbooks', requireAuth, async (req, res) => {
     });
   } finally {
     connection.release();
+    if (uploadedPath) {
+      fs.unlink(uploadedPath).catch(() => {});
+    }
   }
 });
 

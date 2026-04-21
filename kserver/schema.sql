@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS user_songbooks_data (
   exported_at DATETIME NULL,
   book_count INT UNSIGNED NOT NULL DEFAULT 0,
   source_file_count INT UNSIGNED NOT NULL DEFAULT 0,
-  songbooks_json JSON NOT NULL,
+  songbooks_json LONGTEXT NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_user_songbooks_data_user_version (user_id, songbooks_version),

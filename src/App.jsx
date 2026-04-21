@@ -362,11 +362,18 @@ async function fetchAnalysisStatus(book, authSession) {
 }
 
 async function saveSongbooksToServer(backup, authSession) {
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const formData = new FormData();
+  const backupJson = JSON.stringify(backup);
+
+  formData.append(
+    'songbooks',
+    new File([backupJson], `pdfsong-backup-${dateStamp}.json`, { type: 'application/json' })
+  );
+
   return apiAuthedRequest('/saveSongbooks', authSession, {
     method: 'POST',
-    body: JSON.stringify({
-      songbooks_json: backup,
-    }),
+    body: formData,
   });
 }
 
