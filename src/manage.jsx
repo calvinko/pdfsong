@@ -488,7 +488,6 @@ export default function ManagePage({
   importStatus,
   fileInputRef,
   restoreInputRef,
-  onAddFolder,
   onFilesChosen,
   onBackupSongbooks,
   onBackupSongsData,
@@ -579,6 +578,22 @@ export default function ManagePage({
     }
     setRenamingBookId(null);
     setRenamingTitle('');
+  }
+
+  function toggleBookEditing(book) {
+    const isEditing = Boolean(editingBooks[book.id]);
+
+    setEditingBooks((current) => ({
+      ...current,
+      [book.id]: !current[book.id]
+    }));
+
+    if (!isEditing) {
+      setCollapsedBooks((current) => ({
+        ...current,
+        [book.id]: false
+      }));
+    }
   }
 
   useEffect(() => {
@@ -829,10 +844,7 @@ export default function ManagePage({
         }
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <button className={primaryButtonClass} onClick={onAddFolder}>
-            Import from Folder
-          </button>
-          <button className={secondaryButtonClass} onClick={() => fileInputRef.current?.click()}>
+          <button className={primaryButtonClass} onClick={() => fileInputRef.current?.click()}>
             Import Songbooks
           </button>
           <button
@@ -850,7 +862,7 @@ export default function ManagePage({
             Restore Song Books
           </button>
           <button
-            className={`${dangerGhostButtonClass} sm:col-span-2`}
+            className={`${dangerGhostButtonClass}`}
             onClick={() => setShowClearConfirm(true)}
             disabled={!books.length}
           >
@@ -1024,12 +1036,7 @@ export default function ManagePage({
                     </button>
                     <button
                       className="inline-flex h-6 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
-                      onClick={() =>
-                        setEditingBooks((current) => ({
-                          ...current,
-                          [book.id]: !current[book.id]
-                        }))
-                      }
+                      onClick={() => toggleBookEditing(book)}
                     >
                       {editingBooks[book.id] ? 'Done' : 'Edit'}
                     </button>

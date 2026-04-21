@@ -1497,7 +1497,6 @@ export default function App() {
               importStatus={importStatus}
               fileInputRef={fileInputRef}
               restoreInputRef={restoreInputRef}
-              onAddFolder={handleAddFolder}
               onFilesChosen={handleFilesChosen}
               onBackupSongbooks={handleBackupSongbooks}
               onBackupSongsData={handleBackupSongsData}
