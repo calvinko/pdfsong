@@ -12,6 +12,7 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const uploadsDir = 'uploads';
+const songbooksChunkSize = Number(process.env.SONGBOOKS_DB_CHUNK_SIZE || 512 * 1024);
 
 await fs.mkdir(uploadsDir, { recursive: true });
 
@@ -122,6 +123,11 @@ app.post('/saveSongbooks', requireAuth, songbooksUpload.single('songbooks'), asy
       : null;
     const bookCount = songbooks.catalog.length;
     const sourceFileCount = Object.keys(songbooks.pdfs).length;
+    const chunks = [];
+
+    for (let offset = 0; offset < normalizedJson.length; offset += songbooksChunkSize) {
+      chunks.push(normalizedJson.slice(offset, offset + songbooksChunkSize));
+    }
 
     await connection.beginTransaction();
 
@@ -141,29 +147,53 @@ app.post('/saveSongbooks', requireAuth, songbooksUpload.single('songbooks'), asy
     const [result] = await connection.execute(
       `
       INSERT INTO user_songbooks_data
-        (user_id, songbooks_version, exported_at, book_count, source_file_count, songbooks_json)
-      VALUES (?, ?, ?, ?, ?, ?)
+        (user_id, songbooks_version, exported_at, book_count, source_file_count, byte_size, chunk_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
-      [userId, nextVersion, exportedAt, bookCount, sourceFileCount, normalizedJson]
+      [
+        userId,
+        nextVersion,
+        exportedAt,
+        bookCount,
+        sourceFileCount,
+        Buffer.byteLength(normalizedJson, 'utf8'),
+        chunks.length
+      ]
     );
+    const songbooksDataId = result.insertId;
+
+    for (let index = 0; index < chunks.length; index += 1) {
+      await connection.execute(
+        `
+        INSERT INTO user_songbooks_data_chunks (songbooks_data_id, chunk_index, chunk_text)
+        VALUES (?, ?, ?)
+        `,
+        [songbooksDataId, index, chunks[index]]
+      );
+    }
 
     await connection.commit();
 
     res.json({
       ok: true,
       route: '/saveSongbooks',
-      id: result.insertId,
+      id: songbooksDataId,
       userId,
       songbooksVersion: nextVersion,
       bookCount,
       sourceFileCount,
+      chunkCount: chunks.length,
       exportedAt
     });
   } catch (error) {
     await connection.rollback();
     console.error('Save songbooks failed:', error);
+    const connectionReset = ['ECONNRESET', 'PROTOCOL_CONNECTION_LOST', 'ER_NET_PACKET_TOO_LARGE'].includes(error?.code);
+
     res.status(500).json({
-      error: error?.message || 'Failed to save songbooks.'
+      error: connectionReset
+        ? 'Failed to save songbooks because the database connection was reset. Reduce SONGBOOKS_DB_CHUNK_SIZE or increase MySQL max_allowed_packet.'
+        : error?.message || 'Failed to save songbooks.'
     });
   } finally {
     connection.release();

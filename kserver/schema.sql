@@ -64,13 +64,27 @@ CREATE TABLE IF NOT EXISTS user_songbooks_data (
   exported_at DATETIME NULL,
   book_count INT UNSIGNED NOT NULL DEFAULT 0,
   source_file_count INT UNSIGNED NOT NULL DEFAULT 0,
-  songbooks_json LONGTEXT NOT NULL,
+  byte_size BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  chunk_count INT UNSIGNED NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_user_songbooks_data_user_version (user_id, songbooks_version),
   KEY idx_user_songbooks_data_user_created (user_id, created_at),
   CONSTRAINT fk_user_songbooks_data_user
     FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS user_songbooks_data_chunks (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  songbooks_data_id BIGINT UNSIGNED NOT NULL,
+  chunk_index INT UNSIGNED NOT NULL,
+  chunk_text MEDIUMTEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_user_songbooks_data_chunks_index (songbooks_data_id, chunk_index),
+  CONSTRAINT fk_user_songbooks_data_chunks_data
+    FOREIGN KEY (songbooks_data_id) REFERENCES user_songbooks_data(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
