@@ -242,9 +242,10 @@ app.get('/saveSongbooks/latest', requireAuth, async (req, res) => {
     const row = await getLatestSongbooksRow(userId);
 
     if (!row) {
-      return res.status(404).json({
-        ok: false,
-        error: 'No saved songbooks backup found.'
+      return res.json({
+        ok: true,
+        route: '/saveSongbooks/latest',
+        backup: null
       });
     }
 
