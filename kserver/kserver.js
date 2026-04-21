@@ -15,8 +15,8 @@ const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const uploadsDir = 'uploads';
 const songbooksChunkSize = Number(process.env.SONGBOOKS_DB_CHUNK_SIZE || 512 * 1024);
-const songbooksSaveLimitBytes = 76 * 1024 * 1024;
-const songbooksSaveLimitLabel = '76 MB';
+const songbooksSaveLimitBytes = 96 * 1024 * 1024;
+const songbooksSaveLimitLabel = '96 MB';
 
 await fs.mkdir(uploadsDir, { recursive: true });
 

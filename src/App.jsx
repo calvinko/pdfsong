@@ -25,8 +25,8 @@ const DB_NAME = 'songbook-pwa-files';
 const DB_VERSION = 1;
 const FILE_STORE = 'pdfs';
 const API_BASE_URL = 'https://biblecircle.org/kapi';
-const SERVER_SONGBOOKS_SAVE_LIMIT_BYTES = 76 * 1024 * 1024;
-const SERVER_SONGBOOKS_SAVE_LIMIT_LABEL = '76 MB';
+const SERVER_SONGBOOKS_SAVE_LIMIT_BYTES = 96 * 1024 * 1024;
+const SERVER_SONGBOOKS_SAVE_LIMIT_LABEL = '96 MB';
 
 const lyricsPanelClass = 'rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600';
 const panelClass = 'panel rounded-2xl border border-slate-200 bg-white shadow-sm';
