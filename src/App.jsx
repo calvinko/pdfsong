@@ -9,6 +9,7 @@ import {
   useParams,
   useSearchParams,
 } from 'react-router-dom';
+import { strFromU8, unzipSync } from 'fflate';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import ManagePage from './manage.jsx';
@@ -184,6 +185,7 @@ function serializeCatalog(books) {
     title: book.title,
     internalTitle: book.internalTitle || '',
     fileName: book.fileName,
+    format: book.format || inferBookFormat(book.fileName),
     pageCount: book.pageCount,
     songs: book.songs,
     analysisHandle: book.analysisHandle || '',
@@ -228,6 +230,27 @@ async function saveJsonFile(data, fileName) {
   URL.revokeObjectURL(url);
 
   return 'downloads';
+}
+
+function isPdfFile(file) {
+  return file?.type === 'application/pdf' || String(file?.name || '').toLowerCase().endsWith('.pdf');
+}
+
+function isEpubFile(file) {
+  const fileName = String(file?.name || '').toLowerCase();
+  return (
+    file?.type === 'application/epub+zip' ||
+    file?.type === 'application/x-epub+zip' ||
+    fileName.endsWith('.epub')
+  );
+}
+
+function isSupportedBookFile(file) {
+  return isPdfFile(file) || isEpubFile(file);
+}
+
+function inferBookFormat(fileName) {
+  return String(fileName || '').toLowerCase().endsWith('.epub') ? 'epub' : 'pdf';
 }
 
 function loadStoredAuth() {
@@ -311,6 +334,9 @@ async function uploadBookForAnalysis(book, authSession) {
   if (!book.file) {
     throw new Error('This book needs its PDF file before analysis can start.');
   }
+  if (book.format === 'epub' || !isPdfFile(book.file)) {
+    throw new Error('EPUB analysis is not supported yet.');
+  }
 
   const formData = new FormData();
   formData.append('pdf', book.file, book.fileName || book.file.name || `${book.title}.pdf`);
@@ -324,6 +350,9 @@ async function uploadBookForAnalysis(book, authSession) {
 async function backupBookUpload(book, authSession) {
   if (!book.file) {
     throw new Error('This book needs its PDF file before it can be backed up.');
+  }
+  if (book.format === 'epub' || !isPdfFile(book.file)) {
+    throw new Error('Only PDF songbooks can be backed up to the server.');
   }
 
   const formData = new FormData();
@@ -444,6 +473,188 @@ async function extractSongIndex(file) {
   };
 }
 
+function joinArchivePath(basePath, relativePath) {
+  const baseParts = String(basePath || '').split('/').filter(Boolean);
+  const cleanRelativePath = String(relativePath || '').split('#')[0].split('?')[0];
+  const relativeParts = cleanRelativePath.split('/').filter(Boolean);
+  const parts = [...baseParts];
+
+  relativeParts.forEach((part) => {
+    if (part === '.') return;
+    if (part === '..') {
+      parts.pop();
+      return;
+    }
+    parts.push(part);
+  });
+
+  return parts.join('/');
+}
+
+function getXmlAttribute(node, name) {
+  return node?.getAttribute?.(name) || node?.getAttribute?.(name.toLowerCase()) || '';
+}
+
+function firstXmlText(doc, localName) {
+  const entries = Array.from(doc.getElementsByTagNameNS('*', localName));
+  return String(entries[0]?.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function htmlDocumentToText(doc) {
+  doc.querySelectorAll('script, style, nav, head, noscript').forEach((node) => node.remove());
+
+  const blockTags = new Set([
+    'ADDRESS',
+    'ARTICLE',
+    'ASIDE',
+    'BLOCKQUOTE',
+    'DIV',
+    'FIGCAPTION',
+    'FIGURE',
+    'FOOTER',
+    'H1',
+    'H2',
+    'H3',
+    'H4',
+    'H5',
+    'H6',
+    'HEADER',
+    'HR',
+    'LI',
+    'MAIN',
+    'P',
+    'PRE',
+    'SECTION',
+    'TABLE',
+    'TR',
+  ]);
+  const lines = [];
+
+  function appendLine(value) {
+    const cleaned = String(value || '').replace(/[ \t\f\v]+/g, ' ').trim();
+    if (cleaned) lines.push(cleaned);
+  }
+
+  function walk(node, buffer = []) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      buffer.push(node.textContent || '');
+      return buffer;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return buffer;
+    }
+
+    const tagName = node.tagName;
+
+    if (tagName === 'BR') {
+      appendLine(buffer.join(''));
+      buffer.length = 0;
+      return buffer;
+    }
+
+    const isBlock = blockTags.has(tagName);
+    const localBuffer = isBlock ? [] : buffer;
+
+    Array.from(node.childNodes).forEach((child) => {
+      walk(child, localBuffer);
+    });
+
+    if (isBlock) {
+      appendLine(localBuffer.join(''));
+      return buffer;
+    }
+
+    return buffer;
+  }
+
+  const finalBuffer = walk(doc.body || doc.documentElement || doc);
+  appendLine(finalBuffer.join(''));
+
+  return lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function extractEpubIndex(file) {
+  const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+  const containerText = entries['META-INF/container.xml'] ? strFromU8(entries['META-INF/container.xml']) : '';
+
+  if (!containerText) {
+    throw new Error('This EPUB is missing its container file.');
+  }
+
+  const parser = new DOMParser();
+  const containerDoc = parser.parseFromString(containerText, 'application/xml');
+  const rootFilePath = getXmlAttribute(containerDoc.getElementsByTagNameNS('*', 'rootfile')[0], 'full-path');
+
+  if (!rootFilePath || !entries[rootFilePath]) {
+    throw new Error('This EPUB is missing its package document.');
+  }
+
+  const packageDoc = parser.parseFromString(strFromU8(entries[rootFilePath]), 'application/xml');
+  const opfBasePath = rootFilePath.includes('/') ? rootFilePath.slice(0, rootFilePath.lastIndexOf('/')) : '';
+  const title = firstXmlText(packageDoc, 'title') || file.name.replace(/\.epub$/i, '');
+  const manifest = new Map();
+
+  Array.from(packageDoc.getElementsByTagNameNS('*', 'item')).forEach((item) => {
+    const id = getXmlAttribute(item, 'id');
+    const href = getXmlAttribute(item, 'href');
+    const mediaType = getXmlAttribute(item, 'media-type');
+    if (!id || !href) return;
+    manifest.set(id, {
+      href,
+      mediaType,
+      path: joinArchivePath(opfBasePath, href),
+    });
+  });
+
+  const spineItems = Array.from(packageDoc.getElementsByTagNameNS('*', 'itemref'))
+    .map((itemRef) => manifest.get(getXmlAttribute(itemRef, 'idref')))
+    .filter(Boolean)
+    .filter((item) =>
+      /x?html/i.test(item.mediaType) || /\.(xhtml|html?)$/i.test(item.href)
+    );
+
+  const songs = [];
+
+  spineItems.forEach((item) => {
+    const entry = entries[item.path];
+    if (!entry) return;
+
+    const doc = parser.parseFromString(strFromU8(entry), 'text/html');
+    const songTitle =
+      String(doc.querySelector('h1, h2, h3, title')?.textContent || '').replace(/\s+/g, ' ').trim() ||
+      item.href.split('/').pop()?.replace(/\.(xhtml|html?)$/i, '').replace(/[_-]+/g, ' ') ||
+      `Section ${songs.length + 1}`;
+    const lyrics = htmlDocumentToText(doc);
+
+    if (!lyrics) return;
+
+    songs.push({
+      id: uid('song'),
+      title: songTitle,
+      page: songs.length + 1,
+      lyrics,
+    });
+  });
+
+  return {
+    title,
+    pageCount: Math.max(1, songs.length),
+    songs,
+  };
+}
+
+async function extractBookIndex(file) {
+  if (isEpubFile(file)) {
+    return extractEpubIndex(file);
+  }
+
+  return extractSongIndex(file);
+}
+
 function normalizeAnalyzedSongs(payload) {
   const rawSongs = payload?.result?.data?.songs;
   if (!Array.isArray(rawSongs)) {
@@ -474,6 +685,7 @@ function bookFromStored(book) {
     file: null,
     url: null,
     missingFile: true,
+    format: book.format || inferBookFormat(book.fileName),
     internalTitle: book.internalTitle || '',
     analysisHandle: book.analysisHandle || '',
     analysisStatus: book.analysisStatus || '',
@@ -486,6 +698,7 @@ function attachFileToBook(book, file) {
 
   return {
     ...book,
+    format: book.format || inferBookFormat(file.name || book.fileName),
     file,
     url: URL.createObjectURL(file),
     missingFile: false,
@@ -501,7 +714,7 @@ function revokeBookUrls(books) {
 function normalizeBookKey(value) {
   return String(value || '')
     .normalize('NFKC')
-    .replace(/\.pdf$/i, '')
+    .replace(/\.(pdf|epub)$/i, '')
     .replace(/[_-]+/g, ' ')
     .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
     .replace(/\s+/g, ' ')
@@ -533,10 +746,14 @@ function sortBooksByTitle(books) {
 }
 
 async function booksFromFiles(files, existingBooks = [], onProgress, options = {}) {
-  const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith('.pdf'));
+  const bookFiles = files.filter(isSupportedBookFile);
   const books = [];
   const knownBookKeys = new Set();
   const allowDuplicates = options.allowDuplicates === true;
+
+  if (files.length > 0 && bookFiles.length === 0) {
+    throw new Error('Choose at least one PDF or EPUB songbook file.');
+  }
 
   existingBooks.forEach((book) => {
     getBookKeys([book.fileName, book.title, book.internalTitle]).forEach((key) => {
@@ -545,10 +762,10 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
   });
 
   onProgress?.({
-    total: pdfFiles.length,
+    total: bookFiles.length,
     processed: 0,
-    currentFile: pdfFiles[0]?.name || '',
-    items: pdfFiles.map((file) => ({
+    currentFile: bookFiles[0]?.name || '',
+    items: bookFiles.map((file) => ({
       id: uid('import'),
       name: file.name,
       state: 'queued',
@@ -556,8 +773,9 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
     }))
   });
 
-  for (const file of pdfFiles) {
-    const filenameTitle = file.name.replace(/\.pdf$/i, '');
+  for (const file of bookFiles) {
+    const format = isEpubFile(file) ? 'epub' : 'pdf';
+    const filenameTitle = file.name.replace(/\.(pdf|epub)$/i, '');
     const fileKeys = getBookKeys([file.name, filenameTitle]);
 
     if (!allowDuplicates && [...fileKeys].some((key) => knownBookKeys.has(key))) {
@@ -589,7 +807,7 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
     }));
 
     try {
-      const { title, songs, pageCount } = await extractSongIndex(file);
+      const { title, songs, pageCount } = await extractBookIndex(file);
       const extractedKeys = getBookKeys([file.name, filenameTitle, title]);
 
       if (!allowDuplicates && [...extractedKeys].some((key) => knownBookKeys.has(key))) {
@@ -617,6 +835,7 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
         title: filenameTitle,
         internalTitle: title || '',
         fileName: file.name,
+        format,
         file,
         pageCount,
         songs,
@@ -641,7 +860,8 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
                 metadata: {
                   internalTitle: title || '',
                   pageCount,
-                  songCount: songs.length
+                  songCount: songs.length,
+                  format: format.toUpperCase()
                 }
               }
             : item
@@ -664,14 +884,14 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
 
 async function pickFolderFiles() {
   if (!window.showDirectoryPicker) {
-    throw new Error('Folder picker is not supported in this browser. Use “Add PDF files” instead.');
+    throw new Error('Folder picker is not supported in this browser. Use “Import Songbooks” instead.');
   }
 
   const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
   const files = [];
 
   for await (const [, handle] of dirHandle.entries()) {
-    if (handle.kind === 'file' && handle.name.toLowerCase().endsWith('.pdf')) {
+    if (handle.kind === 'file' && /\.(pdf|epub)$/i.test(handle.name)) {
       files.push(await handle.getFile());
     }
   }
@@ -709,7 +929,7 @@ function AppHeader() {
             <>
               <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Song Book Library</h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                Browse books, open a song list, and jump straight to the PDF page you need on desktop or mobile.
+                Browse books, open a song list, and jump straight to the page or text you need on desktop or mobile.
               </p>
             </>
           ) : null}
@@ -758,8 +978,8 @@ function PageFrame({ title, subtitle, backTo, backLabel, headerAction, children,
 function BooksPage({ books, isRestoringFiles }) {
   if (isRestoringFiles) {
     return (
-      <PageFrame title="Books" subtitle="Restoring saved PDFs">
-        <div className={emptyPanelClass}>Restoring saved PDFs…</div>
+      <PageFrame title="Books" subtitle="Restoring saved files">
+        <div className={emptyPanelClass}>Restoring saved files...</div>
       </PageFrame>
     );
   }
@@ -776,7 +996,7 @@ function BooksPage({ books, isRestoringFiles }) {
                 <Link to={`/books/${book.id}`} className="min-w-0 flex-1">
                   <div className="text-sm font-semibold text-slate-900">{book.title}</div>
                   <div className="mt-1 text-xs text-slate-500">
-                    {book.songs.length} songs · {book.pageCount || '?'} pages
+                    {book.songs.length} songs · {book.pageCount || '?'} {book.format === 'epub' ? 'sections' : 'pages'}
                     {book.missingFile ? ' · relink needed' : ''}
                   </div>
                 </Link>
@@ -792,6 +1012,7 @@ function BooksPage({ books, isRestoringFiles }) {
 function SongListPage({ books }) {
   const { bookId } = useParams();
   const book = books.find((entry) => entry.id === bookId);
+  const isEpubBook = book?.format === 'epub';
 
   if (!book) {
     return (
@@ -804,7 +1025,7 @@ function SongListPage({ books }) {
   return (
     <PageFrame
       title={book.title}
-      subtitle={`${book.songs.length} song${book.songs.length === 1 ? '' : 's'} · tap a title to open the PDF`}
+      subtitle={`${book.songs.length} song${book.songs.length === 1 ? '' : 's'} · tap a title to open the ${isEpubBook ? 'text' : 'PDF'}`}
       backTo="/"
       backLabel="Books"
     >
@@ -822,7 +1043,7 @@ function SongListPage({ books }) {
                 className="flex items-baseline justify-between gap-3 px-2 py-2 text-sm transition hover:bg-slate-50"
               >
                 <span className="min-w-0 truncate font-medium text-slate-900">{song.title}</span>
-                <span className="shrink-0 text-xs text-slate-500">p. {song.page}</span>
+                <span className="shrink-0 text-xs text-slate-500">{isEpubBook ? 'section' : 'p.'} {song.page}</span>
               </Link>
             ))}
         </div>
@@ -835,41 +1056,49 @@ function PdfControlBar({ className = '', onZoomOut, onZoomIn, onPrevPage, onNext
   return (
     <div className={className}>
       <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-slate-200 bg-white/35 px-3 py-2 opacity-45 shadow-lg backdrop-blur transition hover:bg-white/95 hover:opacity-100 focus-within:bg-white/95 focus-within:opacity-100">
-        <button
-          className={ghostButtonClass}
-          onClick={onZoomOut}
-          aria-label="Decrease size"
-          title="Decrease size"
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="8.5" cy="8.5" r="4.5" />
-            <path d="M12 12l4 4" />
-            <path d="M6.5 8.5h4" />
-          </svg>
-        </button>
-        <button
-          className={ghostButtonClass}
-          onClick={onZoomIn}
-          aria-label="Increase size"
-          title="Increase size"
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="8.5" cy="8.5" r="4.5" />
-            <path d="M12 12l4 4" />
-            <path d="M8.5 6.5v4" />
-            <path d="M6.5 8.5h4" />
-          </svg>
-        </button>
-        <button className={ghostButtonClass} onClick={onPrevPage} aria-label="Previous page" title="Previous page">
-          <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12.5 4.5L7 10l5.5 5.5" />
-          </svg>
-        </button>
-        <button className={ghostButtonClass} onClick={onNextPage} aria-label="Next page" title="Next page">
-          <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M7.5 4.5L13 10l-5.5 5.5" />
-          </svg>
-        </button>
+        {onZoomOut ? (
+          <button
+            className={ghostButtonClass}
+            onClick={onZoomOut}
+            aria-label="Decrease size"
+            title="Decrease size"
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8.5" cy="8.5" r="4.5" />
+              <path d="M12 12l4 4" />
+              <path d="M6.5 8.5h4" />
+            </svg>
+          </button>
+        ) : null}
+        {onZoomIn ? (
+          <button
+            className={ghostButtonClass}
+            onClick={onZoomIn}
+            aria-label="Increase size"
+            title="Increase size"
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8.5" cy="8.5" r="4.5" />
+              <path d="M12 12l4 4" />
+              <path d="M8.5 6.5v4" />
+              <path d="M6.5 8.5h4" />
+            </svg>
+          </button>
+        ) : null}
+        {onPrevPage ? (
+          <button className={ghostButtonClass} onClick={onPrevPage} aria-label="Previous page" title="Previous page">
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.5 4.5L7 10l5.5 5.5" />
+            </svg>
+          </button>
+        ) : null}
+        {onNextPage ? (
+          <button className={ghostButtonClass} onClick={onNextPage} aria-label="Next page" title="Next page">
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M7.5 4.5L13 10l-5.5 5.5" />
+            </svg>
+          </button>
+        ) : null}
         <button className={ghostButtonClass} onClick={onPrevSong} aria-label="Previous song" title="Previous song">
           <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M11 4.5L5.5 10 11 15.5" />
@@ -944,12 +1173,30 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, c
   );
 }
 
+function EpubTextViewer({ song, controls }) {
+  const lyrics = String(song?.lyrics || '').trim();
+
+  if (!lyrics) {
+    return <div className={emptyPanelClass}>No text was found for this EPUB section.</div>;
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <article className="rounded-xl border border-slate-200 bg-white px-5 py-5 text-base leading-8 text-slate-900 shadow-sm">
+        <pre className="whitespace-pre-wrap font-sans">{lyrics}</pre>
+      </article>
+      {controls ? <div className="flex justify-center md:hidden">{controls}</div> : null}
+    </div>
+  );
+}
+
 function SongViewerPage({ books, updateBook, isRestoringFiles }) {
   const { bookId, songId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const book = books.find((entry) => entry.id === bookId);
   const song = book?.songs.find((entry) => entry.id === songId) || null;
+  const isEpubBook = book?.format === 'epub';
 
   const currentPage = useMemo(() => {
     if (!book || !song) return 1;
@@ -990,7 +1237,12 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
     navigate(`/books/${book.id}/songs/${nextSong.id}?page=${nextSong.page}`);
   };
 
-  const controls = (
+  const controls = isEpubBook ? (
+    <PdfControlBar
+      onPrevSong={() => goToSong(-1)}
+      onNextSong={() => goToSong(1)}
+    />
+  ) : (
     <PdfControlBar
       onZoomOut={() => setZoomScale((current) => Math.max(1, current - 0.25))}
       onZoomIn={() => setZoomScale((current) => Math.min(4, current + 0.25))}
@@ -1004,15 +1256,17 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
   return (
     <PageFrame
       title={song.title}
-      subtitle={`${book.title} · page ${currentPage} of ${book.pageCount || '?'}`}
+      subtitle={`${book.title} · ${isEpubBook ? `section ${song.page} of ${book.songs.length || '?'}` : `page ${currentPage} of ${book.pageCount || '?'}`}`}
       backTo={`/books/${book.id}`}
       backLabel="Songs"
       headerAction={<div className="hidden md:block">{controls}</div>}
     >
       {isRestoringFiles ? (
-        <div className={emptyPanelClass}>Restoring saved PDFs…</div>
+        <div className={emptyPanelClass}>Restoring saved files...</div>
       ) : book.missingFile ? (
-        <div className={emptyPanelClass}>This book was restored without its PDF file. Re-add the PDF to open pages.</div>
+        <div className={emptyPanelClass}>This book was restored without its source file. Re-add the file to open it.</div>
+      ) : isEpubBook ? (
+        <EpubTextViewer song={song} controls={controls} />
       ) : (
         <PdfViewer
           file={book.file}
@@ -1152,7 +1406,7 @@ export default function App() {
       const files = await pickFolderFiles();
       setImportStatus({
         visible: true,
-        message: 'Preparing PDF import…',
+        message: 'Preparing songbook import...',
         total: 0,
         processed: 0,
         currentFile: '',
@@ -1163,7 +1417,7 @@ export default function App() {
           const value = typeof next === 'function' ? next(current) : next;
           return {
             visible: true,
-            message: `Importing song PDFs${value.total ? ` (${value.processed}/${value.total})` : ''}…`,
+            message: `Importing songbooks${value.total ? ` (${value.processed}/${value.total})` : ''}...`,
             ...value
           };
         });
@@ -1191,7 +1445,7 @@ export default function App() {
     try {
       setImportStatus({
         visible: true,
-        message: 'Preparing PDF import…',
+        message: 'Preparing songbook import...',
         total: 0,
         processed: 0,
         currentFile: '',
@@ -1202,7 +1456,7 @@ export default function App() {
           const value = typeof next === 'function' ? next(current) : next;
           return {
             visible: true,
-            message: `Importing song PDFs${value.total ? ` (${value.processed}/${value.total})` : ''}…`,
+            message: `Importing songbooks${value.total ? ` (${value.processed}/${value.total})` : ''}...`,
             ...value
           };
         });
@@ -1219,7 +1473,7 @@ export default function App() {
       setImportStatus((current) => ({
         ...current,
         visible: true,
-        message: error.message || 'Unable to read PDF files.'
+        message: error.message || 'Unable to read songbook files.'
       }));
     }
   }
@@ -1242,7 +1496,7 @@ export default function App() {
           const value = typeof next === 'function' ? next(current) : next;
           return {
             visible: true,
-            message: `Importing song PDFs${value.total ? ` (${value.processed}/${value.total})` : ''}…`,
+            message: `Importing songbooks${value.total ? ` (${value.processed}/${value.total})` : ''}...`,
             ...value
           };
         });
@@ -1459,7 +1713,7 @@ export default function App() {
 
   async function handleBackupSongbooks(sessionOverride = authSession) {
     const activeSession = sessionOverride || authSession;
-    const backupCandidates = books.filter((book) => book.file && !book.missingFile);
+    const backupCandidates = books.filter((book) => book.file && !book.missingFile && book.format !== 'epub' && isPdfFile(book.file));
 
     if (!activeSession) {
       throw new Error('Please log in or register before backing up your songbooks.');

@@ -21,8 +21,7 @@ function saveCollapsedBooks(collapsedBooks) {
 function SectionNotice({ panelClass }) {
   return (
     <div className={`${panelClass} mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600`}>
-      On Android Chrome and desktop Chromium browsers, <strong>Add folder</strong> can open a local directory. On browsers without
-      folder access, use <strong>Add PDF files</strong>. PDFs are cached in IndexedDB after the first import.
+      Import Songbooks accepts PDF and EPUB files. Source files are cached in IndexedDB after the first import.
     </div>
   );
 }
@@ -64,7 +63,7 @@ function ImportStatusPane({ status, onDismiss, onImportAnyway, panelClass, panel
                   ) : null}
                   {item.metadata?.pageCount || item.metadata?.songCount ? (
                     <div className="text-xs text-slate-500">
-                      {item.metadata?.pageCount ? `${item.metadata.pageCount} pages` : ''}
+                      {item.metadata?.pageCount ? `${item.metadata.pageCount} ${item.metadata.format === 'EPUB' ? 'sections' : 'pages'}` : ''}
                       {item.metadata?.pageCount && item.metadata?.songCount ? ' · ' : ''}
                       {item.metadata?.songCount ? `${item.metadata.songCount} songs` : ''}
                     </div>
@@ -274,7 +273,7 @@ function AuthOverlay({
               <div className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="text-sm font-semibold text-slate-900">Server backup</div>
                 <div className="mt-1 text-sm text-slate-500">
-                  Upload all available book PDFs and song catalogs to your account.
+                  Upload all available PDF books and song catalogs to your account.
                 </div>
                 <button
                   className={`${primaryButtonClass} mt-3 w-full`}
@@ -388,7 +387,7 @@ function ConfirmClearOverlay({ bookCount, dangerGhostButtonClass, secondaryButto
         <div className="border-b border-slate-200 px-5 py-4">
           <div className="text-base font-semibold text-slate-900">Clear library?</div>
           <div className="mt-1 text-sm text-slate-500">
-            This removes {bookCount} book{bookCount === 1 ? '' : 's'} from your device and clears the saved PDFs.
+            This removes {bookCount} book{bookCount === 1 ? '' : 's'} from your device and clears the saved source files.
           </div>
         </div>
         <div className="flex flex-col gap-4 px-5 py-5">
@@ -418,7 +417,7 @@ function ConfirmDeleteBookOverlay({ book, dangerGhostButtonClass, secondaryButto
         <div className="border-b border-slate-200 px-5 py-4">
           <div className="text-base font-semibold text-slate-900">Delete book?</div>
           <div className="mt-1 text-sm text-slate-500">
-            <span className="font-medium text-slate-700">{book.title}</span> will be removed from your library and its saved PDF will be deleted.
+            <span className="font-medium text-slate-700">{book.title}</span> will be removed from your library and its saved source file will be deleted.
           </div>
         </div>
         <div className="flex flex-col gap-4 px-5 py-5">
@@ -545,6 +544,7 @@ export default function ManagePage({
   const [pendingRestoreFile, setPendingRestoreFile] = useState(null);
   const [visibleClientInstance, setVisibleClientInstance] = useState(clientInstance);
   const songCount = books.reduce((total, book) => total + (Array.isArray(book.songs) ? book.songs.length : 0), 0);
+  const canBackupToServer = books.some((book) => book.format !== 'epub' && !book.missingFile);
 
   useEffect(() => {
     setCollapsedBooks((current) => {
@@ -680,7 +680,7 @@ export default function ManagePage({
       const result = await onBackupSongsData();
       setDataFileStatus({
         tone: 'success',
-        message: `${result.saveMethod === 'chosen-location' ? 'Saved backup file' : 'Downloaded backup file'} with ${result.backedUp} PDF${result.backedUp === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing PDF${result.missing === 1 ? '' : 's'} included as catalog only` : ''}.`
+        message: `${result.saveMethod === 'chosen-location' ? 'Saved backup file' : 'Downloaded backup file'} with ${result.backedUp} source file${result.backedUp === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} included as catalog only` : ''}.`
       });
     } catch (error) {
       setDataFileStatus({
@@ -704,7 +704,7 @@ export default function ManagePage({
       const action = result.mode === 'merge' ? 'Merged' : 'Restored';
       setDataFileStatus({
         tone: 'success',
-        message: `${action} ${result.restored} book${result.restored === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing PDF${result.missing === 1 ? '' : 's'} restored as catalog only` : ''}.`
+        message: `${action} ${result.restored} book${result.restored === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} restored as catalog only` : ''}.`
       });
     } catch (error) {
       setDataFileStatus({
@@ -755,7 +755,7 @@ export default function ManagePage({
           }}
           backupSubmitting={backupSubmitting}
           backupStatus={backupStatus}
-          canBackup={books.length > 0}
+          canBackup={canBackupToServer}
           onBackup={handleBackupClick}
           onAuthModeChange={(mode) => {
             setAuthMode(mode);
@@ -900,7 +900,7 @@ export default function ManagePage({
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf"
+          accept="application/pdf,application/epub+zip,.pdf,.epub"
           multiple
           className="hidden"
           onChange={(e) => onFilesChosen(e.target.files)}
@@ -944,7 +944,7 @@ export default function ManagePage({
         }
       >
         {isRestoringFiles ? (
-          <div className={emptyPanelClass}>Restoring saved PDFs…</div>
+          <div className={emptyPanelClass}>Restoring saved files...</div>
         ) : books.length === 0 ? (
           <div className={emptyPanelClass}>No books loaded yet.</div>
         ) : (
@@ -1006,7 +1006,7 @@ export default function ManagePage({
                       )}
                     </div>
                     <div className="text-xs text-slate-500">
-                      {book.songs.length} songs · {book.pageCount || '?'} pages
+                      {book.songs.length} songs · {book.pageCount || '?'} {book.format === 'epub' ? 'sections' : 'pages'}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -1025,7 +1025,7 @@ export default function ManagePage({
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Open PDF
+                        {book.format === 'epub' ? 'Open EPUB' : 'Open PDF'}
                       </a>
                     ) : null}
                     <button
@@ -1071,7 +1071,7 @@ export default function ManagePage({
                       <button
                         className={secondaryButtonClass}
                         onClick={() => onAnalyze(book)}
-                        disabled={book.analysisLoading || book.statusLoading || book.missingFile}
+                        disabled={book.analysisLoading || book.statusLoading || book.missingFile || book.format === 'epub'}
                       >
                         {book.analysisLoading ? 'Analyzing…' : 'Analyze'}
                       </button>
@@ -1091,7 +1091,7 @@ export default function ManagePage({
                   </div>
                 ) : book.missingFile ? (
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                    Re-add the PDF file before starting analysis.
+                    Re-add the source file before opening this book.
                   </div>
                 ) : null}
                 {book.analysisSuccess ? (
