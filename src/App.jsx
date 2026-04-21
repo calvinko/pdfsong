@@ -413,6 +413,18 @@ async function saveSongbooksToServer(backup, authSession, onProgress) {
   });
 }
 
+async function fetchSavedSongbooksInfo(authSession) {
+  return apiAuthedRequest('/saveSongbooks/latest', authSession, {
+    cache: 'no-store'
+  });
+}
+
+async function loadSongbooksFromServer(authSession) {
+  return apiAuthedRequest('/saveSongbooks/latest/data', authSession, {
+    cache: 'no-store'
+  });
+}
+
 async function resolveOutlinePage(pdf, dest) {
   if (!dest) {
     return null;
@@ -1516,11 +1528,8 @@ export default function App() {
     };
   }
 
-  async function handleRestoreSongsData(file, restoreMode = 'overwrite') {
-    if (!file) return { restored: 0, missing: 0 };
-
+  async function restoreSongbooksBackup(backup, restoreMode = 'overwrite') {
     const mode = restoreMode === 'merge' ? 'merge' : 'overwrite';
-    const backup = JSON.parse(await file.text());
 
     if (backup?.type !== 'pdfsong-library-backup' || !Array.isArray(backup.catalog) || !backup.pdfs) {
       throw new Error('This does not look like a PDFSong backup file.');
@@ -1575,6 +1584,12 @@ export default function App() {
       missing: missingPdfCount,
       mode,
     };
+  }
+
+  async function handleRestoreSongsData(file, restoreMode = 'overwrite') {
+    if (!file) return { restored: 0, missing: 0 };
+
+    return restoreSongbooksBackup(JSON.parse(await file.text()), restoreMode);
   }
 
   async function handleClear() {
@@ -1686,6 +1701,34 @@ export default function App() {
     };
   }
 
+  async function handleGetSavedSongbooksInfo(sessionOverride = authSession) {
+    const activeSession = sessionOverride || authSession;
+
+    if (!activeSession) return null;
+
+    try {
+      const result = await fetchSavedSongbooksInfo(activeSession);
+      return result?.backup || null;
+    } catch (error) {
+      if (/No saved songbooks backup/i.test(error.message || '')) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  async function handleLoadSongbooksFromServer(sessionOverride = authSession, restoreMode = 'overwrite') {
+    const activeSession = sessionOverride || authSession;
+
+    if (!activeSession) {
+      throw new Error('Please log in or register before loading your songbooks.');
+    }
+
+    const result = await loadSongbooksFromServer(activeSession);
+    return restoreSongbooksBackup(result?.songbooks, restoreMode);
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-1 py-6 text-slate-900 md:px-4 lg:px-8">
       <AppHeader />
@@ -1706,6 +1749,8 @@ export default function App() {
               restoreInputRef={restoreInputRef}
               onFilesChosen={handleFilesChosen}
               onSaveSongbooksToServer={handleSaveSongbooksToServer}
+              onGetSavedSongbooksInfo={handleGetSavedSongbooksInfo}
+              onLoadSongbooksFromServer={handleLoadSongbooksFromServer}
               onBackupSongsData={handleBackupSongsData}
               onRestoreSongsData={handleRestoreSongsData}
               onClear={handleClear}

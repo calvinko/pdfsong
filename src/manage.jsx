@@ -228,6 +228,9 @@ function AuthOverlay({
   backupProgressText,
   backupStatus,
   canBackup,
+  serverBackupInfo,
+  serverBackupLoading,
+  loadSubmitting,
   inputClass,
   primaryButtonClass,
   dangerGhostButtonClass,
@@ -235,6 +238,7 @@ function AuthOverlay({
   onClose,
   onLogout,
   onBackup,
+  onLoad,
   onAuthModeChange,
   onAuthFormChange,
   onSubmit,
@@ -285,10 +289,27 @@ function AuthOverlay({
                   className={`${primaryButtonClass} mt-3 w-full`}
                   onClick={onBackup}
                   type="button"
-                  disabled={!canBackup || backupSubmitting}
+                  disabled={!canBackup || backupSubmitting || loadSubmitting}
                 >
                   {backupSubmitting ? backupProgressText || 'Saving...' : 'Save all books'}
                 </button>
+                {serverBackupInfo ? (
+                  <button
+                    className={`${secondaryButtonClass} mt-2 w-full`}
+                    onClick={onLoad}
+                    type="button"
+                    disabled={backupSubmitting || loadSubmitting}
+                  >
+                    {loadSubmitting ? 'Loading...' : 'Load songbooks'}
+                  </button>
+                ) : null}
+                {serverBackupLoading ? (
+                  <div className="mt-2 text-xs text-slate-500">Checking for saved songbooks...</div>
+                ) : serverBackupInfo ? (
+                  <div className="mt-2 text-xs text-slate-500">
+                    Server version {serverBackupInfo.songbooksVersion} · {serverBackupInfo.bookCount} book{serverBackupInfo.bookCount === 1 ? '' : 's'}
+                  </div>
+                ) : null}
                 {backupStatus ? (
                   <div
                     className={`mt-3 rounded-xl px-4 py-3 text-sm ${
@@ -495,6 +516,8 @@ export default function ManagePage({
   restoreInputRef,
   onFilesChosen,
   onSaveSongbooksToServer,
+  onGetSavedSongbooksInfo,
+  onLoadSongbooksFromServer,
   onBackupSongsData,
   onRestoreSongsData,
   onClear,
@@ -546,9 +569,13 @@ export default function ManagePage({
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupProgressText, setBackupProgressText] = useState('');
   const [backupStatus, setBackupStatus] = useState(null);
+  const [serverBackupInfo, setServerBackupInfo] = useState(null);
+  const [serverBackupLoading, setServerBackupLoading] = useState(false);
+  const [loadSubmitting, setLoadSubmitting] = useState(false);
   const [dataFileSubmitting, setDataFileSubmitting] = useState(false);
   const [dataFileStatus, setDataFileStatus] = useState(null);
   const [pendingRestoreFile, setPendingRestoreFile] = useState(null);
+  const [pendingServerRestore, setPendingServerRestore] = useState(false);
   const [visibleClientInstance, setVisibleClientInstance] = useState(clientInstance);
   const songCount = books.reduce((total, book) => total + (Array.isArray(book.songs) ? book.songs.length : 0), 0);
   const canBackupToServer = books.length > 0;
@@ -572,6 +599,34 @@ export default function ManagePage({
   useEffect(() => {
     setVisibleClientInstance(clientInstance || getClientInstance());
   }, [clientInstance]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!showAuthOverlay || !authSession) {
+      setServerBackupInfo(null);
+      setServerBackupLoading(false);
+      return undefined;
+    }
+
+    setServerBackupLoading(true);
+
+    onGetSavedSongbooksInfo(authSession)
+      .then((backupInfo) => {
+        if (!cancelled) setServerBackupInfo(backupInfo);
+      })
+      .catch((error) => {
+        console.error('Unable to check saved songbooks:', error);
+        if (!cancelled) setServerBackupInfo(null);
+      })
+      .finally(() => {
+        if (!cancelled) setServerBackupLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession, showAuthOverlay]);
 
   function startRenamingBook(book) {
     setRenamingBookId(book.id);
@@ -684,6 +739,11 @@ export default function ManagePage({
         tone: 'success',
         message: `Saved ${result.backedUp} source file${result.backedUp === 1 ? '' : 's'} to server${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} saved as catalog only` : ''}${result.serverVersion ? ` · version ${result.serverVersion}` : ''}.`
       });
+      setServerBackupInfo({
+        songbooksVersion: result.serverVersion,
+        bookCount: books.length,
+        sourceFileCount: result.backedUp
+      });
     } catch (error) {
       setBackupStatus({
         tone: 'error',
@@ -692,6 +752,41 @@ export default function ManagePage({
     } finally {
       setBackupSubmitting(false);
       setBackupProgressText('');
+    }
+  }
+
+  async function handleLoadSongbooksClick(restoreMode = null) {
+    if (!authSession) {
+      setAuthMode('login');
+      setAuthError('');
+      setAuthSuccess('Log in or register to load your songbooks.');
+      setShowAuthOverlay(true);
+      return;
+    }
+
+    if (!restoreMode && (books.length > 0 || songCount > 0)) {
+      setPendingServerRestore(true);
+      return;
+    }
+
+    setPendingServerRestore(false);
+    setBackupStatus(null);
+    setLoadSubmitting(true);
+
+    try {
+      const result = await onLoadSongbooksFromServer(authSession, restoreMode || 'overwrite');
+      setBackupStatus({
+        tone: 'success',
+        message: `Loaded ${result.restored} book${result.restored === 1 ? '' : 's'} from server${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} loaded as catalog only` : ''}.`
+      });
+      setShowAuthOverlay(false);
+    } catch (error) {
+      setBackupStatus({
+        tone: 'error',
+        message: error.message || 'Unable to load songbooks from server.'
+      });
+    } finally {
+      setLoadSubmitting(false);
     }
   }
 
@@ -780,7 +875,11 @@ export default function ManagePage({
           backupProgressText={backupProgressText}
           backupStatus={backupStatus}
           canBackup={canBackupToServer}
+          serverBackupInfo={serverBackupInfo}
+          serverBackupLoading={serverBackupLoading}
+          loadSubmitting={loadSubmitting}
           onBackup={handleBackupClick}
+          onLoad={() => handleLoadSongbooksClick()}
           onAuthModeChange={(mode) => {
             setAuthMode(mode);
             setAuthError('');
@@ -834,6 +933,20 @@ export default function ManagePage({
           }}
           onMerge={() => handleRestoreSongsDataFile(pendingRestoreFile, 'merge')}
           onOverwrite={() => handleRestoreSongsDataFile(pendingRestoreFile, 'overwrite')}
+        />
+      ) : null}
+
+      {pendingServerRestore ? (
+        <ConfirmRestoreOverlay
+          bookCount={books.length}
+          songCount={songCount}
+          fileName="the latest server backup"
+          dangerGhostButtonClass={dangerGhostButtonClass}
+          primaryButtonClass={primaryButtonClass}
+          secondaryButtonClass={secondaryButtonClass}
+          onClose={() => setPendingServerRestore(false)}
+          onMerge={() => handleLoadSongbooksClick('merge')}
+          onOverwrite={() => handleLoadSongbooksClick('overwrite')}
         />
       ) : null}
 

@@ -93,6 +93,37 @@ function getAuthenticatedUserId(req, res) {
   return userId;
 }
 
+function serializeSongbooksRow(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    userId: row.user_id,
+    songbooksVersion: row.songbooks_version,
+    exportedAt: row.exported_at,
+    bookCount: row.book_count,
+    sourceFileCount: row.source_file_count,
+    byteSize: row.byte_size,
+    chunkCount: row.chunk_count,
+    createdAt: row.created_at,
+  };
+}
+
+async function getLatestSongbooksRow(userId) {
+  const [rows] = await pool.execute(
+    `
+    SELECT id, user_id, songbooks_version, exported_at, book_count, source_file_count, byte_size, chunk_count, created_at
+    FROM user_songbooks_data
+    WHERE user_id = ?
+    ORDER BY songbooks_version DESC, id DESC
+    LIMIT 1
+    `,
+    [userId]
+  );
+
+  return rows[0] || null;
+}
+
 app.post('/saveSongbooks', requireAuth, songbooksUpload.single('songbooks'), async (req, res) => {
   const connection = await pool.getConnection();
   const uploadedPath = req.file?.path || null;
@@ -200,6 +231,79 @@ app.post('/saveSongbooks', requireAuth, songbooksUpload.single('songbooks'), asy
     if (uploadedPath) {
       fs.unlink(uploadedPath).catch(() => {});
     }
+  }
+});
+
+app.get('/saveSongbooks/latest', requireAuth, async (req, res) => {
+  try {
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) return;
+
+    const row = await getLatestSongbooksRow(userId);
+
+    if (!row) {
+      return res.status(404).json({
+        ok: false,
+        error: 'No saved songbooks backup found.'
+      });
+    }
+
+    res.json({
+      ok: true,
+      route: '/saveSongbooks/latest',
+      backup: serializeSongbooksRow(row)
+    });
+  } catch (error) {
+    console.error('Get latest songbooks metadata failed:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to get latest songbooks metadata.'
+    });
+  }
+});
+
+app.get('/saveSongbooks/latest/data', requireAuth, async (req, res) => {
+  try {
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) return;
+
+    const row = await getLatestSongbooksRow(userId);
+
+    if (!row) {
+      return res.status(404).json({
+        ok: false,
+        error: 'No saved songbooks backup found.'
+      });
+    }
+
+    const [chunks] = await pool.execute(
+      `
+      SELECT chunk_text
+      FROM user_songbooks_data_chunks
+      WHERE songbooks_data_id = ?
+      ORDER BY chunk_index ASC
+      `,
+      [row.id]
+    );
+
+    if (chunks.length !== Number(row.chunk_count)) {
+      return res.status(500).json({
+        error: 'Saved songbooks backup is incomplete.'
+      });
+    }
+
+    const songbooks = JSON.parse(chunks.map((chunk) => chunk.chunk_text).join(''));
+
+    res.json({
+      ok: true,
+      route: '/saveSongbooks/latest/data',
+      backup: serializeSongbooksRow(row),
+      songbooks
+    });
+  } catch (error) {
+    console.error('Load latest songbooks failed:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to load latest songbooks.'
+    });
   }
 });
 
