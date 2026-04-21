@@ -1500,7 +1500,6 @@ export default function App() {
               onAddFolder={handleAddFolder}
               onFilesChosen={handleFilesChosen}
               onBackupSongbooks={handleBackupSongbooks}
-              onBackupSongsData={handleBackupSongsData}
               onRestoreSongsData={handleRestoreSongsData}
               onClear={handleClear}
               onDeleteBook={handleDeleteBook}

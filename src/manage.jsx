@@ -220,12 +220,16 @@ function AuthOverlay({
   authError,
   authSuccess,
   authSubmitting,
+  backupSubmitting,
+  backupStatus,
+  canBackup,
   inputClass,
   primaryButtonClass,
   dangerGhostButtonClass,
   secondaryButtonClass,
   onClose,
   onLogout,
+  onBackup,
   onAuthModeChange,
   onAuthFormChange,
   onSubmit,
@@ -239,7 +243,7 @@ function AuthOverlay({
               {authSession ? 'Account' : authMode === 'register' ? 'Create account' : 'Log in'}
             </div>
             <div className="mt-1 text-sm text-slate-500">
-              {authSession ? 'Manage your current session.' : 'Register or log in from the app.'}
+              {authSession ? 'Manage your current session and server backups.' : 'Register or log in from the app.'}
             </div>
           </div>
           <button
@@ -266,6 +270,31 @@ function AuthOverlay({
                 <div className="mt-1 text-xs text-slate-500">
                   {authSession.user?.userUuid ? `User ID: ${authSession.user.userUuid}` : 'Session active'}
                 </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">Server backup</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  Upload all available book PDFs and song catalogs to your account.
+                </div>
+                <button
+                  className={`${primaryButtonClass} mt-3 w-full`}
+                  onClick={onBackup}
+                  type="button"
+                  disabled={!canBackup || backupSubmitting}
+                >
+                  {backupSubmitting ? 'Backing up...' : 'Back up all books'}
+                </button>
+                {backupStatus ? (
+                  <div
+                    className={`mt-3 rounded-xl px-4 py-3 text-sm ${
+                      backupStatus.tone === 'error'
+                        ? 'border border-rose-200 bg-rose-50 text-rose-700'
+                        : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                    }`}
+                  >
+                    {backupStatus.message}
+                  </div>
+                ) : null}
               </div>
               <div className="flex justify-end gap-2">
                 <button className={secondaryButtonClass} onClick={onClose} type="button">
@@ -462,7 +491,6 @@ export default function ManagePage({
   onAddFolder,
   onFilesChosen,
   onBackupSongbooks,
-  onBackupSongsData,
   onRestoreSongsData,
   onClear,
   onDeleteBook,
@@ -512,7 +540,6 @@ export default function ManagePage({
   const [bookPendingDelete, setBookPendingDelete] = useState(null);
   const [backupSubmitting, setBackupSubmitting] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null);
-  const [pendingBackupAfterAuth, setPendingBackupAfterAuth] = useState(false);
   const [dataFileSubmitting, setDataFileSubmitting] = useState(false);
   const [dataFileStatus, setDataFileStatus] = useState(null);
   const [pendingRestoreFile, setPendingRestoreFile] = useState(null);
@@ -593,27 +620,6 @@ export default function ManagePage({
       setAuthSuccess(authMode === 'register' ? 'Registration successful.' : 'Login successful.');
       setAuthForm((current) => ({ ...current, password: '' }));
       setShowAuthOverlay(false);
-
-      if (pendingBackupAfterAuth) {
-        setPendingBackupAfterAuth(false);
-        setBackupSubmitting(true);
-        setBackupStatus(null);
-
-        try {
-          const result = await onBackupSongbooks(session);
-          setBackupStatus({
-            tone: 'success',
-            message: `Backed up ${result.backedUp} songbook${result.backedUp === 1 ? '' : 's'}${result.skipped ? ` · skipped ${result.skipped} without local PDFs` : ''}.`
-          });
-        } catch (error) {
-          setBackupStatus({
-            tone: 'error',
-            message: error.message || 'Unable to back up songbooks.'
-          });
-        } finally {
-          setBackupSubmitting(false);
-        }
-      }
     } catch (error) {
       setAuthError(error.message || 'Authentication failed.');
     } finally {
@@ -625,7 +631,6 @@ export default function ManagePage({
     setBackupStatus(null);
 
     if (!authSession) {
-      setPendingBackupAfterAuth(true);
       setAuthMode('login');
       setAuthError('');
       setAuthSuccess('Log in or register to back up your songbooks.');
@@ -648,26 +653,6 @@ export default function ManagePage({
       });
     } finally {
       setBackupSubmitting(false);
-    }
-  }
-
-  async function handleBackupSongsDataClick() {
-    setDataFileStatus(null);
-    setDataFileSubmitting(true);
-
-    try {
-      const result = await onBackupSongsData();
-      setDataFileStatus({
-        tone: 'success',
-        message: `${result.saveMethod === 'chosen-location' ? 'Saved backup file' : 'Downloaded backup file'} with ${result.backedUp} PDF${result.backedUp === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing PDF${result.missing === 1 ? '' : 's'} included as catalog only` : ''}.`
-      });
-    } catch (error) {
-      setDataFileStatus({
-        tone: 'error',
-        message: error.message || 'Unable to create backup file.'
-      });
-    } finally {
-      setDataFileSubmitting(false);
     }
   }
 
@@ -727,13 +712,15 @@ export default function ManagePage({
             setShowAuthOverlay(false);
             setAuthError('');
             setAuthSuccess('');
-            setPendingBackupAfterAuth(false);
           }}
           onLogout={() => {
             onLogout();
             setShowAuthOverlay(false);
-            setPendingBackupAfterAuth(false);
           }}
+          backupSubmitting={backupSubmitting}
+          backupStatus={backupStatus}
+          canBackup={books.length > 0}
+          onBackup={handleBackupClick}
           onAuthModeChange={(mode) => {
             setAuthMode(mode);
             setAuthError('');
@@ -829,13 +816,6 @@ export default function ManagePage({
           </button>
           <button
             className={secondaryButtonClass}
-            onClick={handleBackupSongsDataClick}
-            disabled={!books.length || dataFileSubmitting}
-          >
-            {dataFileSubmitting ? 'Preparing…' : 'Backup Song Books'}
-          </button>
-          <button
-            className={secondaryButtonClass}
             onClick={() => restoreInputRef.current?.click()}
             disabled={dataFileSubmitting}
           >
@@ -849,18 +829,6 @@ export default function ManagePage({
             Clear library
           </button>
         </div>
-
-        {backupStatus ? (
-          <div
-            className={`mt-4 rounded-xl px-4 py-3 text-sm ${
-              backupStatus.tone === 'error'
-                ? 'border border-rose-200 bg-rose-50 text-rose-700'
-                : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-            }`}
-          >
-            {backupStatus.message}
-          </div>
-        ) : null}
 
         {dataFileStatus ? (
           <div
