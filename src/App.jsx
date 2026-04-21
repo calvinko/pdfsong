@@ -25,8 +25,6 @@ const DB_NAME = 'songbook-pwa-files';
 const DB_VERSION = 1;
 const FILE_STORE = 'pdfs';
 const API_BASE_URL = 'https://biblecircle.org/kapi';
-const SERVER_SONGBOOKS_SAVE_LIMIT_BYTES = 128 * 1024 * 1024;
-const SERVER_SONGBOOKS_SAVE_LIMIT_LABEL = '128 MB';
 
 const lyricsPanelClass = 'rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600';
 const panelClass = 'panel rounded-2xl border border-slate-200 bg-white shadow-sm';
@@ -367,11 +365,6 @@ async function saveSongbooksToServer(backup, authSession, onProgress) {
   const dateStamp = new Date().toISOString().slice(0, 10);
   const formData = new FormData();
   const backupJson = JSON.stringify(backup);
-  const backupSize = new Blob([backupJson], { type: 'application/json' }).size;
-
-  if (backupSize > SERVER_SONGBOOKS_SAVE_LIMIT_BYTES) {
-    throw new Error(`Cannot save to server because the backup is over ${SERVER_SONGBOOKS_SAVE_LIMIT_LABEL}.`);
-  }
 
   formData.append(
     'songbooks',

@@ -15,16 +15,11 @@ const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const uploadsDir = 'uploads';
 const songbooksChunkSize = Number(process.env.SONGBOOKS_DB_CHUNK_SIZE || 512 * 1024);
-const songbooksSaveLimitBytes = 128 * 1024 * 1024;
-const songbooksSaveLimitLabel = '128 MB';
 
 await fs.mkdir(uploadsDir, { recursive: true });
 
 const songbooksUpload = multer({
   dest: uploadsDir,
-  limits: {
-    fileSize: songbooksSaveLimitBytes
-  },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === 'application/json' || file.originalname.toLowerCase().endsWith('.json')) {
       cb(null, true);
@@ -39,17 +34,6 @@ function uploadSongbooks(req, res, next) {
   songbooksUpload.single('songbooks')(req, res, (error) => {
     if (!error) {
       next();
-      return;
-    }
-
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      if (req.file?.path) {
-        fs.unlink(req.file.path).catch(() => {});
-      }
-
-      res.status(413).json({
-        error: `Cannot save to server because the backup is over ${songbooksSaveLimitLabel}.`
-      });
       return;
     }
 
@@ -170,12 +154,6 @@ app.post('/saveSongbooks', requireAuth, uploadSongbooks, async (req, res) => {
 
     const normalizedJson = await fs.readFile(req.file.path, 'utf8');
     const byteSize = Buffer.byteLength(normalizedJson, 'utf8');
-
-    if (byteSize > songbooksSaveLimitBytes) {
-      return res.status(413).json({
-        error: `Cannot save to server because the backup is over ${songbooksSaveLimitLabel}.`
-      });
-    }
 
     const songbooks = JSON.parse(normalizedJson);
 
