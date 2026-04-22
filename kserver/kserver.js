@@ -16,7 +16,7 @@ const gunzipAsync = promisify(gunzip);
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const uploadsDir = 'uploads';
-const songbooksChunkSize = Number(process.env.SONGBOOKS_DB_CHUNK_SIZE || 512 * 1024);
+const songbooksChunkSize = Number(process.env.SONGBOOKS_DB_CHUNK_SIZE || 4 * 1024 * 1024);
 
 await fs.mkdir(uploadsDir, { recursive: true });
 
