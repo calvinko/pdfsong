@@ -523,6 +523,23 @@ function joinArchivePath(basePath, relativePath) {
   return parts.join('/');
 }
 
+function decodeArchivePath(path) {
+  try {
+    return decodeURI(path);
+  } catch {
+    return path;
+  }
+}
+
+function getArchiveEntry(entries, path) {
+  return entries[path] || entries[decodeArchivePath(path)];
+}
+
+function getArchiveEntryText(entries, path) {
+  const entry = getArchiveEntry(entries, path);
+  return entry ? strFromU8(entry) : '';
+}
+
 function getXmlAttribute(node, name) {
   return node?.getAttribute?.(name) || node?.getAttribute?.(name.toLowerCase()) || '';
 }
@@ -532,86 +549,141 @@ function firstXmlText(doc, localName) {
   return String(entries[0]?.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
-function htmlDocumentToText(doc) {
-  doc.querySelectorAll('script, style, nav, head, noscript').forEach((node) => node.remove());
+function mimeTypeFromPath(path) {
+  const extension = String(path || '').split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
+  const types = {
+    avif: 'image/avif',
+    css: 'text/css',
+    gif: 'image/gif',
+    htm: 'text/html',
+    html: 'text/html',
+    jpeg: 'image/jpeg',
+    jpg: 'image/jpeg',
+    js: 'text/javascript',
+    m4a: 'audio/mp4',
+    mp3: 'audio/mpeg',
+    mp4: 'video/mp4',
+    otf: 'font/otf',
+    png: 'image/png',
+    svg: 'image/svg+xml',
+    ttf: 'font/ttf',
+    webp: 'image/webp',
+    woff: 'font/woff',
+    woff2: 'font/woff2',
+    xhtml: 'application/xhtml+xml',
+  };
 
-  const blockTags = new Set([
-    'ADDRESS',
-    'ARTICLE',
-    'ASIDE',
-    'BLOCKQUOTE',
-    'DIV',
-    'FIGCAPTION',
-    'FIGURE',
-    'FOOTER',
-    'H1',
-    'H2',
-    'H3',
-    'H4',
-    'H5',
-    'H6',
-    'HEADER',
-    'HR',
-    'LI',
-    'MAIN',
-    'P',
-    'PRE',
-    'SECTION',
-    'TABLE',
-    'TR',
-  ]);
-  const lines = [];
-
-  function appendLine(value) {
-    const cleaned = String(value || '').replace(/[ \t\f\v]+/g, ' ').trim();
-    if (cleaned) lines.push(cleaned);
-  }
-
-  function walk(node, buffer = []) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      buffer.push(node.textContent || '');
-      return buffer;
-    }
-
-    if (node.nodeType !== Node.ELEMENT_NODE) {
-      return buffer;
-    }
-
-    const tagName = node.tagName;
-
-    if (tagName === 'BR') {
-      appendLine(buffer.join(''));
-      buffer.length = 0;
-      return buffer;
-    }
-
-    const isBlock = blockTags.has(tagName);
-    const localBuffer = isBlock ? [] : buffer;
-
-    Array.from(node.childNodes).forEach((child) => {
-      walk(child, localBuffer);
-    });
-
-    if (isBlock) {
-      appendLine(localBuffer.join(''));
-      return buffer;
-    }
-
-    return buffer;
-  }
-
-  const finalBuffer = walk(doc.body || doc.documentElement || doc);
-  appendLine(finalBuffer.join(''));
-
-  return lines
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return types[extension] || 'application/octet-stream';
 }
 
-async function extractEpubIndex(file) {
-  const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
-  const containerText = entries['META-INF/container.xml'] ? strFromU8(entries['META-INF/container.xml']) : '';
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 8192;
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+
+  return btoa(binary);
+}
+
+function archiveEntryDataUrl(entries, path) {
+  const entry = getArchiveEntry(entries, path);
+  if (!entry) return '';
+
+  return `data:${mimeTypeFromPath(path)};base64,${bytesToBase64(entry)}`;
+}
+
+function isRewritableEpubUrl(url) {
+  const value = String(url || '').trim();
+  return (
+    value &&
+    !value.startsWith('#') &&
+    !/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(value) &&
+    !/^(?:data|blob|mailto|tel|javascript):/i.test(value)
+  );
+}
+
+function rewriteCssUrls(cssText, cssPath, entries) {
+  const cssBasePath = cssPath.includes('/') ? cssPath.slice(0, cssPath.lastIndexOf('/')) : '';
+
+  return String(cssText || '').replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
+    if (!isRewritableEpubUrl(url)) return match;
+
+    const assetPath = joinArchivePath(cssBasePath, url);
+    const dataUrl = archiveEntryDataUrl(entries, assetPath);
+    return dataUrl ? `url(${quote || '"'}${dataUrl}${quote || '"'})` : match;
+  });
+}
+
+function buildEpubSectionSrcDoc(htmlText, htmlPath, entries) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlText, 'text/html');
+  const htmlBasePath = htmlPath.includes('/') ? htmlPath.slice(0, htmlPath.lastIndexOf('/')) : '';
+
+  doc.querySelectorAll('script, noscript').forEach((node) => node.remove());
+
+  doc.querySelectorAll('link[href]').forEach((link) => {
+    const rel = String(link.getAttribute('rel') || '').toLowerCase();
+    if (!rel.split(/\s+/).includes('stylesheet')) return;
+
+    const href = link.getAttribute('href');
+    if (!isRewritableEpubUrl(href)) return;
+
+    const cssPath = joinArchivePath(htmlBasePath, href);
+    const cssText = getArchiveEntryText(entries, cssPath);
+    if (!cssText) return;
+
+    const style = doc.createElement('style');
+    style.textContent = rewriteCssUrls(cssText, cssPath, entries);
+    link.replaceWith(style);
+  });
+
+  doc.querySelectorAll('[style]').forEach((node) => {
+    node.setAttribute('style', rewriteCssUrls(node.getAttribute('style'), htmlPath, entries));
+  });
+
+  [
+    ['img', 'src'],
+    ['image', 'href'],
+    ['image', 'xlink:href'],
+    ['source', 'src'],
+    ['audio', 'src'],
+    ['video', 'src'],
+    ['video', 'poster'],
+  ].forEach(([selector, attribute]) => {
+    doc.querySelectorAll(selector).forEach((node) => {
+      if (!node.hasAttribute(attribute)) return;
+
+      const url = node.getAttribute(attribute);
+      if (!isRewritableEpubUrl(url)) return;
+
+      const assetPath = joinArchivePath(htmlBasePath, url);
+      const dataUrl = archiveEntryDataUrl(entries, assetPath);
+      if (dataUrl) node.setAttribute(attribute, dataUrl);
+    });
+  });
+
+  const head = doc.head || doc.documentElement.insertBefore(doc.createElement('head'), doc.body || null);
+  const viewport = doc.createElement('meta');
+  viewport.setAttribute('name', 'viewport');
+  viewport.setAttribute('content', 'width=device-width, initial-scale=1');
+  head.prepend(viewport);
+
+  const displayStyle = doc.createElement('style');
+  displayStyle.textContent = `
+    html { color-scheme: light; background: #ffffff; }
+    body { margin: 0; padding: 24px; box-sizing: border-box; overflow-wrap: anywhere; }
+    img, svg, video { max-width: 100%; height: auto; }
+    table { max-width: 100%; }
+  `;
+  head.append(displayStyle);
+
+  return `<!doctype html>\n${doc.documentElement.outerHTML}`;
+}
+
+function getEpubSpineItems(entries) {
+  const containerText = getArchiveEntryText(entries, 'META-INF/container.xml');
 
   if (!containerText) {
     throw new Error('This EPUB is missing its container file.');
@@ -621,13 +693,12 @@ async function extractEpubIndex(file) {
   const containerDoc = parser.parseFromString(containerText, 'application/xml');
   const rootFilePath = getXmlAttribute(containerDoc.getElementsByTagNameNS('*', 'rootfile')[0], 'full-path');
 
-  if (!rootFilePath || !entries[rootFilePath]) {
+  if (!rootFilePath || !getArchiveEntry(entries, rootFilePath)) {
     throw new Error('This EPUB is missing its package document.');
   }
 
-  const packageDoc = parser.parseFromString(strFromU8(entries[rootFilePath]), 'application/xml');
+  const packageDoc = parser.parseFromString(getArchiveEntryText(entries, rootFilePath), 'application/xml');
   const opfBasePath = rootFilePath.includes('/') ? rootFilePath.slice(0, rootFilePath.lastIndexOf('/')) : '';
-  const title = firstXmlText(packageDoc, 'title') || file.name.replace(/\.epub$/i, '');
   const manifest = new Map();
 
   Array.from(packageDoc.getElementsByTagNameNS('*', 'item')).forEach((item) => {
@@ -642,17 +713,45 @@ async function extractEpubIndex(file) {
     });
   });
 
-  const spineItems = Array.from(packageDoc.getElementsByTagNameNS('*', 'itemref'))
-    .map((itemRef) => manifest.get(getXmlAttribute(itemRef, 'idref')))
-    .filter(Boolean)
-    .filter((item) =>
-      /x?html/i.test(item.mediaType) || /\.(xhtml|html?)$/i.test(item.href)
-    );
+  return {
+    packageDoc,
+    spineItems: Array.from(packageDoc.getElementsByTagNameNS('*', 'itemref'))
+      .map((itemRef) => manifest.get(getXmlAttribute(itemRef, 'idref')))
+      .filter(Boolean)
+      .filter((item) =>
+        /x?html/i.test(item.mediaType) || /\.(xhtml|html?)$/i.test(item.href)
+      ),
+  };
+}
 
+async function loadEpubSectionSrcDoc(file, song) {
+  const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+  const { spineItems } = getEpubSpineItems(entries);
+  const section =
+    spineItems.find((item) => item.path === song?.htmlPath) ||
+    spineItems[clampPage(song?.page, spineItems.length) - 1];
+
+  if (!section) {
+    throw new Error('This EPUB section could not be found.');
+  }
+
+  const htmlText = getArchiveEntryText(entries, section.path);
+  if (!htmlText) {
+    throw new Error('This EPUB section is empty.');
+  }
+
+  return buildEpubSectionSrcDoc(htmlText, section.path, entries);
+}
+
+async function extractEpubIndex(file) {
+  const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+  const parser = new DOMParser();
+  const { packageDoc, spineItems } = getEpubSpineItems(entries);
+  const title = firstXmlText(packageDoc, 'title') || file.name.replace(/\.epub$/i, '');
   const songs = [];
 
   spineItems.forEach((item) => {
-    const entry = entries[item.path];
+    const entry = getArchiveEntry(entries, item.path);
     if (!entry) return;
 
     const doc = parser.parseFromString(strFromU8(entry), 'text/html');
@@ -660,15 +759,12 @@ async function extractEpubIndex(file) {
       String(doc.querySelector('h1, h2, h3, title')?.textContent || '').replace(/\s+/g, ' ').trim() ||
       item.href.split('/').pop()?.replace(/\.(xhtml|html?)$/i, '').replace(/[_-]+/g, ' ') ||
       `Section ${songs.length + 1}`;
-    const lyrics = htmlDocumentToText(doc);
-
-    if (!lyrics) return;
 
     songs.push({
       id: uid('song'),
       title: songTitle,
       page: songs.length + 1,
-      lyrics,
+      htmlPath: item.path,
     });
   });
 
@@ -1188,18 +1284,52 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, c
   );
 }
 
-function EpubTextViewer({ song, controls }) {
-  const lyrics = String(song?.lyrics || '').trim();
+function EpubHtmlViewer({ file, song, controls }) {
+  const [srcDoc, setSrcDoc] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  if (!lyrics) {
-    return <div className={emptyPanelClass}>No text was found for this EPUB section.</div>;
-  }
+  useEffect(() => {
+    let cancelled = false;
+
+    async function render() {
+      if (!file || !song) return;
+
+      setLoading(true);
+      setError('');
+      try {
+        const html = await loadEpubSectionSrcDoc(file, song);
+        if (!cancelled) setSrcDoc(html);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setError('Could not display this EPUB section.');
+          setSrcDoc('');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    render();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file, song]);
 
   return (
     <div className="flex flex-col gap-3">
-      <article className="rounded-xl border border-slate-200 bg-white px-5 py-5 text-base leading-8 text-slate-900 shadow-sm">
-        <pre className="whitespace-pre-wrap font-sans">{lyrics}</pre>
-      </article>
+      {loading ? <div className={emptyPanelClass}>Loading EPUB section...</div> : null}
+      {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
+      {srcDoc ? (
+        <iframe
+          title={song?.title || 'EPUB section'}
+          srcDoc={srcDoc}
+          sandbox=""
+          className="min-h-[72vh] w-full rounded-xl border border-slate-200 bg-white shadow-sm"
+        />
+      ) : null}
       {controls ? <div className="flex justify-center md:hidden">{controls}</div> : null}
     </div>
   );
@@ -1281,7 +1411,7 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
       ) : book.missingFile ? (
         <div className={emptyPanelClass}>This book was restored without its source file. Re-add the file to open it.</div>
       ) : isEpubBook ? (
-        <EpubTextViewer song={song} controls={controls} />
+        <EpubHtmlViewer file={book.file} song={song} controls={controls} />
       ) : (
         <PdfViewer
           file={book.file}
