@@ -31,7 +31,7 @@ function SectionNotice({ panelClass }) {
   );
 }
 
-function ImportStatusPane({ status, onDismiss, onImportAnyway, panelClass, panelHeaderClass, panelBodyClass, secondaryButtonClass }) {
+function ImportStatusPane({ status, onDismiss, onImportAnyway, secondaryButtonClass }) {
   if (!status?.visible) return null;
 
   const total = Number(status.total) || 0;
@@ -39,69 +39,88 @@ function ImportStatusPane({ status, onDismiss, onImportAnyway, panelClass, panel
   const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
 
   return (
-    <section className={`${panelClass} mb-4 overflow-hidden`}>
-      <div className={panelHeaderClass}>
-        <div className="flex items-center justify-between gap-3">
-          <div className="truncate text-base font-semibold text-slate-900">Import Status</div>
-          <button className={secondaryButtonClass} onClick={onDismiss}>
-            Dismiss
-          </button>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm">
+      <section className="flex max-h-[calc(100vh-3rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="truncate text-base font-semibold text-slate-900">Import Status</div>
+              <div className="mt-1 text-sm text-slate-500">Track progress and handle duplicates before returning to the library.</div>
+            </div>
+            <button
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+              onClick={onDismiss}
+              aria-label="Close import status dialog"
+              title="Close"
+              type="button"
+            >
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4">
+                <path d="M5 5l10 10" />
+                <path d="M15 5L5 15" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </div>
-      <div className={`${panelBodyClass} flex flex-col gap-3`}>
-        <div className="text-sm text-slate-700">{status.message}</div>
-        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-          <div className="h-full rounded-full bg-sky-600 transition-all" style={{ width: `${percent}%` }} />
-        </div>
-        <div className="text-xs text-slate-500">
-          {processed} of {total} processed
-        </div>
-        {status.currentFile ? <div className="text-sm text-slate-600">Current file: {status.currentFile}</div> : null}
-        {Array.isArray(status.items) && status.items.length ? (
-          <div className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            {status.items.map((item) => (
-              <div key={item.id} className="flex items-start justify-between gap-3 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate text-slate-700">{item.name}</div>
-                  {item.metadata?.internalTitle ? (
-                    <div className="truncate text-xs text-slate-500">Internal title: {item.metadata.internalTitle}</div>
-                  ) : null}
-                  {item.metadata?.pageCount || item.metadata?.songCount ? (
-                    <div className="text-xs text-slate-500">
-                      {item.metadata?.pageCount ? `${item.metadata.pageCount} ${item.metadata.format === 'EPUB' ? 'sections' : 'pages'}` : ''}
-                      {item.metadata?.pageCount && item.metadata?.songCount ? ' · ' : ''}
-                      {item.metadata?.songCount ? `${item.metadata.songCount} songs` : ''}
-                    </div>
-                  ) : null}
-                  {item.metadata?.reason ? (
-                    <div className="text-xs text-slate-500">{item.metadata.reason}</div>
+        <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-5">
+          <div className="text-sm text-slate-700">{status.message}</div>
+          <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+            <div className="h-full rounded-full bg-sky-600 transition-all" style={{ width: `${percent}%` }} />
+          </div>
+          <div className="text-xs text-slate-500">
+            {processed} of {total} processed
+          </div>
+          {status.currentFile ? <div className="text-sm text-slate-600">Current file: {status.currentFile}</div> : null}
+          {Array.isArray(status.items) && status.items.length ? (
+            <div className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              {status.items.map((item) => (
+                <div key={item.id} className="flex items-start justify-between gap-3 text-sm">
+                  <div className="min-w-0">
+                    <div className="truncate text-slate-700">{item.name}</div>
+                    {item.metadata?.internalTitle ? (
+                      <div className="truncate text-xs text-slate-500">Internal title: {item.metadata.internalTitle}</div>
+                    ) : null}
+                    {item.metadata?.pageCount || item.metadata?.songCount ? (
+                      <div className="text-xs text-slate-500">
+                        {item.metadata?.pageCount ? `${item.metadata.pageCount} ${item.metadata.format === 'EPUB' ? 'sections' : 'pages'}` : ''}
+                        {item.metadata?.pageCount && item.metadata?.songCount ? ' · ' : ''}
+                        {item.metadata?.songCount ? `${item.metadata.songCount} songs` : ''}
+                      </div>
+                    ) : null}
+                    {item.metadata?.reason ? (
+                      <div className="text-xs text-slate-500">{item.metadata.reason}</div>
+                    ) : null}
+                  </div>
+                  <span
+                    className={
+                      item.state === 'error'
+                        ? 'shrink-0 text-rose-600'
+                        : item.state === 'skipped'
+                          ? 'shrink-0 text-amber-600'
+                          : 'shrink-0 text-slate-500'
+                    }
+                  >
+                    {item.state}
+                  </span>
+                  {item.state === 'skipped' && item.file ? (
+                    <button
+                      className={`${secondaryButtonClass} shrink-0 px-3 py-1 text-xs`}
+                      onClick={() => onImportAnyway(item)}
+                    >
+                      Import anyway
+                    </button>
                   ) : null}
                 </div>
-                <span
-                  className={
-                    item.state === 'error'
-                      ? 'shrink-0 text-rose-600'
-                      : item.state === 'skipped'
-                        ? 'shrink-0 text-amber-600'
-                        : 'shrink-0 text-slate-500'
-                  }
-                >
-                  {item.state}
-                </span>
-                {item.state === 'skipped' && item.file ? (
-                  <button
-                    className={`${secondaryButtonClass} shrink-0 px-3 py-1 text-xs`}
-                    onClick={() => onImportAnyway(item)}
-                  >
-                    Import anyway
-                  </button>
-                ) : null}
-              </div>
-            ))}
+              ))}
+            </div>
+          ) : null}
+          <div className="flex justify-end pt-1">
+            <button className={secondaryButtonClass} onClick={onDismiss} type="button">
+              Dismiss
+            </button>
           </div>
-        ) : null}
-      </div>
-    </section>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -967,9 +986,6 @@ export default function ManagePage({
         status={importStatus}
         onDismiss={onDismissImportStatus}
         onImportAnyway={onImportAnyway}
-        panelClass={panelClass}
-        panelHeaderClass={panelHeaderClass}
-        panelBodyClass={panelBodyClass}
         secondaryButtonClass={secondaryButtonClass}
       />
 
