@@ -544,7 +544,7 @@ function ImportFromUrlOverlay({
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <div className="text-base font-semibold text-slate-900">Import from URL</div>
-            <div className="mt-1 text-sm text-slate-500">Enter a JSON backup, PDF, or EPUB link.</div>
+            <div className="mt-1 text-sm text-slate-500">Enter a JSON or ZIP backup, PDF, or EPUB link.</div>
           </div>
           <button
             className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
@@ -1120,7 +1120,7 @@ export default function ManagePage({
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf,application/epub+zip,application/json,.pdf,.epub,.json"
+          accept="application/pdf,application/epub+zip,application/json,application/zip,.pdf,.epub,.json,.zip"
           multiple
           className="hidden"
           onChange={(e) => {

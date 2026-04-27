@@ -268,6 +268,19 @@ function isJsonDataFile(file) {
   return file?.type === 'application/json' || fileName.endsWith('.json');
 }
 
+function isZipDataFile(file) {
+  const fileName = String(file?.name || '').toLowerCase();
+  return (
+    file?.type === 'application/zip' ||
+    file?.type === 'application/x-zip-compressed' ||
+    fileName.endsWith('.zip')
+  );
+}
+
+function isLibraryBackupPayload(value) {
+  return value?.type === 'pdfsong-library-backup' && Array.isArray(value.catalog) && value.pdfs;
+}
+
 function fileNameFromUrl(url, contentType = '') {
   try {
     const parsed = new URL(url);
@@ -280,6 +293,7 @@ function fileNameFromUrl(url, contentType = '') {
   if (contentType.includes('application/json')) return 'library-backup.json';
   if (contentType.includes('application/epub')) return 'songbook.epub';
   if (contentType.includes('application/pdf')) return 'songbook.pdf';
+  if (contentType.includes('zip')) return 'library-backup.zip';
   return 'songbook';
 }
 
@@ -1691,12 +1705,66 @@ export default function App() {
     });
   }
 
+  async function readBackupFromZipFile(file) {
+    const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+    const candidates = Object.entries(entries)
+      .filter(([path, bytes]) => path.toLowerCase().endsWith('.json') && bytes?.length)
+      .sort(([a], [b]) => {
+        const aName = a.toLowerCase();
+        const bName = b.toLowerCase();
+        const aScore = aName.includes('backup') || aName.includes('songbook') || aName.includes('library') ? 0 : 1;
+        const bScore = bName.includes('backup') || bName.includes('songbook') || bName.includes('library') ? 0 : 1;
+        return aScore - bScore || a.localeCompare(b);
+      });
+
+    for (const [path, bytes] of candidates) {
+      try {
+        const parsed = JSON.parse(strFromU8(bytes));
+        if (isLibraryBackupPayload(parsed)) {
+          return { backup: parsed, path };
+        }
+      } catch {
+        // Keep looking; ZIPs may contain unrelated JSON files.
+      }
+    }
+
+    throw new Error('This ZIP does not contain a valid PDFSong JSON backup file.');
+  }
+
   async function handleFilesChosen(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
 
     try {
+      const zipFiles = files.filter(isZipDataFile);
       const jsonFiles = files.filter(isJsonDataFile);
+
+      if (zipFiles.length > 0) {
+        if (zipFiles.length > 1 || zipFiles.length !== files.length) {
+          throw new Error('Choose one ZIP library backup at a time, or choose PDF/EPUB songbooks.');
+        }
+
+        setImportStatus({
+          visible: true,
+          message: 'Checking ZIP backup...',
+          total: 0,
+          processed: 0,
+          currentFile: zipFiles[0].name || '',
+          items: []
+        });
+
+        const { backup, path } = await readBackupFromZipFile(zipFiles[0]);
+        const result = await restoreSongbooksBackup(backup, 'merge');
+        setImportStatus({
+          visible: true,
+          message: `Import finished. Added ${result.restored} book${result.restored === 1 ? '' : 's'} from ZIP${path ? ` (${path})` : ''}${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} imported as catalog only` : ''}.`,
+          total: 0,
+          processed: 0,
+          currentFile: '',
+          items: []
+        });
+        return;
+      }
 
       if (jsonFiles.length > 0) {
         if (jsonFiles.length > 1 || jsonFiles.length !== files.length) {
@@ -1786,9 +1854,21 @@ export default function App() {
     });
 
     async function downloadImportFile(importUrl, options = {}) {
-      const response = await fetch(importUrl);
+      const response = await fetch(importUrl, { cache: 'no-store' });
       if (!response.ok) {
-        throw new Error(`Could not download the file from this URL (${response.status}).`);
+        let errorMessage = '';
+        try {
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            errorMessage = (await response.json())?.error || '';
+          } else {
+            errorMessage = (await response.text()).trim();
+          }
+        } catch {
+          errorMessage = '';
+        }
+
+        throw new Error(errorMessage || `Could not download the file from this URL (${response.status}).`);
       }
 
       const contentType = response.headers.get('content-type') || '';
@@ -1805,13 +1885,25 @@ export default function App() {
     try {
       file = await downloadImportFile(trimmedUrl);
     } catch (directError) {
+      setImportStatus({
+        visible: true,
+        message: 'Direct download failed. Trying server import...',
+        total: 0,
+        processed: 0,
+        currentFile: trimmedUrl,
+        items: []
+      });
+
       try {
         file = await downloadImportFile(
           `${API_BASE_URL}/importUrl?url=${encodeURIComponent(trimmedUrl)}`,
           { sourceUrl: trimmedUrl }
         );
       } catch (proxyError) {
-        throw new Error(proxyError.message || directError.message || 'Unable to import from this URL.');
+        throw new Error(
+          proxyError.message ||
+            `Direct download failed (${directError.message || 'browser blocked the request'}) and server import also failed.`
+        );
       }
     }
 
@@ -1911,7 +2003,7 @@ export default function App() {
   async function restoreSongbooksBackup(backup, restoreMode = 'overwrite') {
     const mode = restoreMode === 'merge' ? 'merge' : 'overwrite';
 
-    if (backup?.type !== 'pdfsong-library-backup' || !Array.isArray(backup.catalog) || !backup.pdfs) {
+    if (!isLibraryBackupPayload(backup)) {
       throw new Error('This does not look like a PDFSong backup file.');
     }
 

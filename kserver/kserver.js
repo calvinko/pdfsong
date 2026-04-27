@@ -118,6 +118,7 @@ function fileNameFromImportUrl(url, contentType = '') {
   if (contentType.includes('application/json')) return 'library-backup.json';
   if (contentType.includes('application/epub')) return 'songbook.epub';
   if (contentType.includes('application/pdf')) return 'songbook.pdf';
+  if (contentType.includes('zip')) return 'library-backup.zip';
   return 'songbook';
 }
 
