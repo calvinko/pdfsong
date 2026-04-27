@@ -21,6 +21,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const STORAGE_KEY = 'songbook-pwa-catalog-v1';
 const AUTH_STORAGE_KEY = 'songbook-pwa-auth-v1';
+const COMPACT_BOOK_LIST_STORAGE_KEY = 'songbook-pwa-compact-book-list-v1';
 const DB_NAME = 'songbook-pwa-files';
 const DB_VERSION = 1;
 const FILE_STORE = 'pdfs';
@@ -45,7 +46,20 @@ const dangerGhostButtonClass =
   'inline-flex items-center justify-center rounded-lg border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45';
 const listItemBaseClass = 'block w-full rounded-xl border px-4 py-3 text-left transition';
 const listItemClass = `${listItemBaseClass} border-slate-200 bg-white hover:bg-slate-50`;
+const compactListItemClass = 'block w-full border border-slate-200 bg-white px-3 py-1.5 text-left transition hover:bg-slate-50';
 const listItemActiveClass = `${listItemBaseClass} border-sky-500 bg-sky-50 ring-1 ring-sky-200`;
+
+function loadCompactBookList() {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+    return false;
+  }
+
+  try {
+    return localStorage.getItem(COMPACT_BOOK_LIST_STORAGE_KEY) === 'true';
+  } catch (error) {
+    return false;
+  }
+}
 
 function HomeIcon() {
   return (
@@ -1087,6 +1101,16 @@ function PageFrame({ title, subtitle, backTo, backLabel, headerAction, children,
 }
 
 function BooksPage({ books, isRestoringFiles }) {
+  const [compactBookList, setCompactBookList] = useState(() => loadCompactBookList());
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COMPACT_BOOK_LIST_STORAGE_KEY, String(compactBookList));
+    } catch (error) {
+      // Ignore storage failures; the switch still works for this session.
+    }
+  }, [compactBookList]);
+
   if (isRestoringFiles) {
     return (
       <PageFrame title="Books" subtitle="Restoring saved files">
@@ -1096,20 +1120,50 @@ function BooksPage({ books, isRestoringFiles }) {
   }
 
   return (
-    <PageFrame title="Books" subtitle={`${books.length} book${books.length === 1 ? '' : 's'} in your library`}>
+    <PageFrame
+      title="Books"
+      subtitle={`${books.length} book${books.length === 1 ? '' : 's'} in your library`}
+      headerAction={
+        books.length ? (
+          <div className="inline-flex items-center gap-2 text-sm font-medium text-slate-600">
+            <span>Compact</span>
+            <button
+              type="button"
+              role="switch"
+              aria-label="Use compact book list"
+              aria-checked={compactBookList}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition ${
+                compactBookList ? 'border-sky-600 bg-sky-600' : 'border-slate-300 bg-slate-200'
+              }`}
+              onClick={() => setCompactBookList((current) => !current)}
+            >
+              <span
+                className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                  compactBookList ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        ) : null
+      }
+    >
       {books.length === 0 ? (
         <div className={emptyPanelClass}>No books loaded yet.</div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className={compactBookList ? 'flex flex-col gap-0' : 'flex flex-col gap-3'}>
           {books.map((book) => (
-            <div key={book.id} className={listItemClass}>
+            <div key={book.id} className={compactBookList ? compactListItemClass : listItemClass}>
               <div className="flex items-start gap-3">
                 <Link to={`/books/${book.id}`} className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-slate-900">{book.title}</div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {book.songs.length} songs · {book.pageCount || '?'} {book.format === 'epub' ? 'sections' : 'pages'}
-                    {book.missingFile ? ' · relink needed' : ''}
+                  <div className={compactBookList ? 'truncate text-sm font-medium text-slate-900' : 'text-sm font-semibold text-slate-900'}>
+                    {book.title}
                   </div>
+                  {compactBookList ? null : (
+                    <div className="mt-1 text-xs text-slate-500">
+                      {book.songs.length} songs · {book.pageCount || '?'} {book.format === 'epub' ? 'sections' : 'pages'}
+                      {book.missingFile ? ' · relink needed' : ''}
+                    </div>
+                  )}
                 </Link>
               </div>
             </div>
