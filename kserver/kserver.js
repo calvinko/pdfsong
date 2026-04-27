@@ -36,6 +36,8 @@ const songbooksUpload = multer({
   }
 });
 
+const importUrlMaxBytes = Number(process.env.IMPORT_URL_MAX_BYTES || 100 * 1024 * 1024);
+
 function uploadSongbooks(req, res, next) {
   songbooksUpload.single('songbooks')(req, res, (error) => {
     if (!error) {
@@ -103,6 +105,69 @@ app.use(
   createAuthRouter({ pool })
 );
 app.use('/songpdf', songPdfRouter);
+
+function fileNameFromImportUrl(url, contentType = '') {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split('/').filter(Boolean).pop() || '';
+    if (name) return decodeURIComponent(name).replace(/[^\w.\- ()]/g, '_');
+  } catch {
+    // Fall through to a content-type based default.
+  }
+
+  if (contentType.includes('application/json')) return 'library-backup.json';
+  if (contentType.includes('application/epub')) return 'songbook.epub';
+  if (contentType.includes('application/pdf')) return 'songbook.pdf';
+  return 'songbook';
+}
+
+app.get('/importUrl', async (req, res) => {
+  const url = String(req.query.url || '').trim();
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    res.status(400).json({ error: 'Enter a valid URL.' });
+    return;
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    res.status(400).json({ error: 'Import from URL supports only http and https links.' });
+    return;
+  }
+
+  try {
+    const response = await fetch(parsedUrl);
+    if (!response.ok) {
+      res.status(502).json({ error: `Could not download the file from this URL (${response.status}).` });
+      return;
+    }
+
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (contentLength > importUrlMaxBytes) {
+      res.status(413).json({ error: 'This URL is too large to import.' });
+      return;
+    }
+
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > importUrlMaxBytes) {
+      res.status(413).json({ error: 'This URL is too large to import.' });
+      return;
+    }
+
+    const fileName = fileNameFromImportUrl(url, contentType);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', String(arrayBuffer.byteLength));
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName.replace(/"/g, '')}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type');
+    res.send(Buffer.from(arrayBuffer));
+  } catch (error) {
+    console.error('Import URL download failed:', error);
+    res.status(502).json({ error: error?.message || 'Unable to download this URL.' });
+  }
+});
 
 function getAuthenticatedUserId(req, res) {
   const userId = Number(req.auth?.sub);

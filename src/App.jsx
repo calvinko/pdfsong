@@ -46,7 +46,7 @@ const dangerGhostButtonClass =
   'inline-flex items-center justify-center rounded-lg border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45';
 const listItemBaseClass = 'block w-full rounded-xl border px-4 py-3 text-left transition';
 const listItemClass = `${listItemBaseClass} border-slate-200 bg-white hover:bg-slate-50`;
-const compactListItemClass = 'block w-full border border-slate-200 bg-white px-3 py-2 text-left transition hover:bg-slate-50';
+const compactListItemClass = 'block w-full border border-slate-200 bg-white px-3 py-2.5 text-left transition hover:bg-slate-50';
 const listItemActiveClass = `${listItemBaseClass} border-sky-500 bg-sky-50 ring-1 ring-sky-200`;
 
 function loadCompactBookList() {
@@ -261,6 +261,41 @@ function isEpubFile(file) {
 
 function isSupportedBookFile(file) {
   return isPdfFile(file) || isEpubFile(file);
+}
+
+function isJsonDataFile(file) {
+  const fileName = String(file?.name || '').toLowerCase();
+  return file?.type === 'application/json' || fileName.endsWith('.json');
+}
+
+function fileNameFromUrl(url, contentType = '') {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split('/').filter(Boolean).pop() || '';
+    if (name) return decodeURIComponent(name);
+  } catch {
+    // Fall through to a content-type based default.
+  }
+
+  if (contentType.includes('application/json')) return 'library-backup.json';
+  if (contentType.includes('application/epub')) return 'songbook.epub';
+  if (contentType.includes('application/pdf')) return 'songbook.pdf';
+  return 'songbook';
+}
+
+function fileNameFromContentDisposition(contentDisposition) {
+  const value = String(contentDisposition || '');
+  const encodedMatch = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encodedMatch) {
+    try {
+      return decodeURIComponent(encodedMatch[1].trim());
+    } catch {
+      return encodedMatch[1].trim();
+    }
+  }
+
+  const match = value.match(/filename="?([^";]+)"?/i);
+  return match?.[1]?.trim() || '';
 }
 
 function inferBookFormat(fileName) {
@@ -1565,7 +1600,6 @@ export default function App() {
     items: []
   });
   const fileInputRef = useRef(null);
-  const restoreInputRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -1660,7 +1694,36 @@ export default function App() {
   async function handleFilesChosen(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
+
     try {
+      const jsonFiles = files.filter(isJsonDataFile);
+
+      if (jsonFiles.length > 0) {
+        if (jsonFiles.length > 1 || jsonFiles.length !== files.length) {
+          throw new Error('Choose one JSON library backup at a time, or choose PDF/EPUB songbooks.');
+        }
+
+        setImportStatus({
+          visible: true,
+          message: 'Importing library backup...',
+          total: 0,
+          processed: 0,
+          currentFile: jsonFiles[0].name || '',
+          items: []
+        });
+
+        const result = await restoreSongbooksBackup(JSON.parse(await jsonFiles[0].text()), 'merge');
+        setImportStatus({
+          visible: true,
+          message: `Import finished. Added ${result.restored} book${result.restored === 1 ? '' : 's'} from JSON${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} imported as catalog only` : ''}.`,
+          total: 0,
+          processed: 0,
+          currentFile: '',
+          items: []
+        });
+        return;
+      }
+
       setImportStatus({
         visible: true,
         message: 'Preparing songbook import...',
@@ -1694,6 +1757,65 @@ export default function App() {
         message: error.message || 'Unable to read songbook files.'
       }));
     }
+  }
+
+  async function handleImportFromUrl(url) {
+    const trimmedUrl = String(url || '').trim();
+    if (!trimmedUrl) {
+      throw new Error('Enter a URL to import.');
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(trimmedUrl);
+    } catch {
+      throw new Error('Enter a valid URL.');
+    }
+
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      throw new Error('Import from URL supports only http and https links.');
+    }
+
+    setImportStatus({
+      visible: true,
+      message: 'Downloading import file...',
+      total: 0,
+      processed: 0,
+      currentFile: trimmedUrl,
+      items: []
+    });
+
+    async function downloadImportFile(importUrl, options = {}) {
+      const response = await fetch(importUrl);
+      if (!response.ok) {
+        throw new Error(`Could not download the file from this URL (${response.status}).`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      const blob = await response.blob();
+      return new File(
+        [blob],
+        fileNameFromContentDisposition(response.headers.get('content-disposition')) ||
+          fileNameFromUrl(options.sourceUrl || importUrl, contentType),
+        { type: blob.type || contentType || 'application/octet-stream' }
+      );
+    }
+
+    let file;
+    try {
+      file = await downloadImportFile(trimmedUrl);
+    } catch (directError) {
+      try {
+        file = await downloadImportFile(
+          `${API_BASE_URL}/importUrl?url=${encodeURIComponent(trimmedUrl)}`,
+          { sourceUrl: trimmedUrl }
+        );
+      } catch (proxyError) {
+        throw new Error(proxyError.message || directError.message || 'Unable to import from this URL.');
+      }
+    }
+
+    await handleFilesChosen([file]);
   }
 
   async function handleImportAnyway(item) {
@@ -1842,12 +1964,6 @@ export default function App() {
       missing: missingPdfCount,
       mode,
     };
-  }
-
-  async function handleRestoreSongsData(file, restoreMode = 'overwrite') {
-    if (!file) return { restored: 0, missing: 0 };
-
-    return restoreSongbooksBackup(JSON.parse(await file.text()), restoreMode);
   }
 
   async function handleClear() {
@@ -2004,13 +2120,12 @@ export default function App() {
               clientInstance={clientInstance}
               importStatus={importStatus}
               fileInputRef={fileInputRef}
-              restoreInputRef={restoreInputRef}
               onFilesChosen={handleFilesChosen}
+              onImportFromUrl={handleImportFromUrl}
               onSaveSongbooksToServer={handleSaveSongbooksToServer}
               onGetSavedSongbooksInfo={handleGetSavedSongbooksInfo}
               onLoadSongbooksFromServer={handleLoadSongbooksFromServer}
               onBackupSongsData={handleBackupSongsData}
-              onRestoreSongsData={handleRestoreSongsData}
               onClear={handleClear}
               onDeleteBook={handleDeleteBook}
               onReorderBooks={reorderBooks}

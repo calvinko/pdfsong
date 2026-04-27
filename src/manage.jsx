@@ -528,6 +528,61 @@ function ConfirmRestoreOverlay({
   );
 }
 
+function ImportFromUrlOverlay({
+  importUrl,
+  submitting,
+  inputClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  onUrlChange,
+  onClose,
+  onSubmit,
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-base font-semibold text-slate-900">Import from URL</div>
+            <div className="mt-1 text-sm text-slate-500">Enter a JSON backup, PDF, or EPUB link.</div>
+          </div>
+          <button
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+            onClick={onClose}
+            type="button"
+            aria-label="Close import from URL"
+          >
+            ×
+          </button>
+        </div>
+
+        <input
+          className={inputClass}
+          type="url"
+          value={importUrl}
+          onChange={(e) => onUrlChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && importUrl.trim() && !submitting) {
+              onSubmit();
+            }
+          }}
+          placeholder="https://example.com/songbook.pdf"
+          autoFocus
+        />
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button className={secondaryButtonClass} onClick={onClose} type="button" disabled={submitting}>
+            Cancel
+          </button>
+          <button className={primaryButtonClass} onClick={onSubmit} type="button" disabled={submitting || !importUrl.trim()}>
+            {submitting ? 'Importing...' : 'Import'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ManagePage({
   books,
   isRestoringFiles,
@@ -535,13 +590,12 @@ export default function ManagePage({
   clientInstance,
   importStatus,
   fileInputRef,
-  restoreInputRef,
   onFilesChosen,
+  onImportFromUrl,
   onSaveSongbooksToServer,
   onGetSavedSongbooksInfo,
   onLoadSongbooksFromServer,
   onBackupSongsData,
-  onRestoreSongsData,
   onClear,
   onDeleteBook,
   onReorderBooks,
@@ -597,7 +651,10 @@ export default function ManagePage({
   const [loadSubmitting, setLoadSubmitting] = useState(false);
   const [dataFileSubmitting, setDataFileSubmitting] = useState(false);
   const [dataFileStatus, setDataFileStatus] = useState(null);
-  const [pendingRestoreFile, setPendingRestoreFile] = useState(null);
+  const [importUrl, setImportUrl] = useState('');
+  const [showImportUrlOverlay, setShowImportUrlOverlay] = useState(false);
+  const [urlImportSubmitting, setUrlImportSubmitting] = useState(false);
+  const [urlImportStatus, setUrlImportStatus] = useState(null);
   const [pendingServerRestore, setPendingServerRestore] = useState(false);
   const [visibleClientInstance, setVisibleClientInstance] = useState(clientInstance);
   const songCount = books.reduce((total, book) => total + (Array.isArray(book.songs) ? book.songs.length : 0), 0);
@@ -841,42 +898,26 @@ export default function ManagePage({
     }
   }
 
-  async function handleRestoreSongsDataFile(file, restoreMode = 'overwrite') {
-    if (!file) return;
-
-    setPendingRestoreFile(null);
-    setDataFileStatus(null);
-    setDataFileSubmitting(true);
+  async function handleImportFromUrlClick() {
+    setUrlImportStatus(null);
+    setUrlImportSubmitting(true);
 
     try {
-      const result = await onRestoreSongsData(file, restoreMode);
-      const action = result.mode === 'merge' ? 'Merged' : 'Restored';
-      setDataFileStatus({
+      await onImportFromUrl(importUrl);
+      setImportUrl('');
+      setShowImportUrlOverlay(false);
+      setUrlImportStatus({
         tone: 'success',
-        message: `${action} ${result.restored} book${result.restored === 1 ? '' : 's'}${result.missing ? ` · ${result.missing} missing source file${result.missing === 1 ? '' : 's'} restored as catalog only` : ''}.`
+        message: 'Import from URL finished.'
       });
     } catch (error) {
-      setDataFileStatus({
+      setUrlImportStatus({
         tone: 'error',
-        message: error.message || 'Unable to restore backup file.'
+        message: error.message || 'Unable to import from this URL.'
       });
     } finally {
-      setDataFileSubmitting(false);
-      if (restoreInputRef.current) {
-        restoreInputRef.current.value = '';
-      }
+      setUrlImportSubmitting(false);
     }
-  }
-
-  function handleRestoreInputChange(file) {
-    if (!file) return;
-
-    if (books.length > 0 || songCount > 0) {
-      setPendingRestoreFile(file);
-      return;
-    }
-
-    handleRestoreSongsDataFile(file);
   }
 
   return (
@@ -949,25 +990,6 @@ export default function ManagePage({
         />
       ) : null}
 
-      {pendingRestoreFile ? (
-        <ConfirmRestoreOverlay
-          bookCount={books.length}
-          songCount={songCount}
-          fileName={pendingRestoreFile.name}
-          dangerGhostButtonClass={dangerGhostButtonClass}
-          primaryButtonClass={primaryButtonClass}
-          secondaryButtonClass={secondaryButtonClass}
-          onClose={() => {
-            setPendingRestoreFile(null);
-            if (restoreInputRef.current) {
-              restoreInputRef.current.value = '';
-            }
-          }}
-          onMerge={() => handleRestoreSongsDataFile(pendingRestoreFile, 'merge')}
-          onOverwrite={() => handleRestoreSongsDataFile(pendingRestoreFile, 'overwrite')}
-        />
-      ) : null}
-
       {pendingServerRestore ? (
         <ConfirmRestoreOverlay
           bookCount={books.length}
@@ -979,6 +1001,23 @@ export default function ManagePage({
           onClose={() => setPendingServerRestore(false)}
           onMerge={() => handleLoadSongbooksClick('merge')}
           onOverwrite={() => handleLoadSongbooksClick('overwrite')}
+        />
+      ) : null}
+
+      {showImportUrlOverlay ? (
+        <ImportFromUrlOverlay
+          importUrl={importUrl}
+          submitting={urlImportSubmitting}
+          inputClass={inputClass}
+          primaryButtonClass={primaryButtonClass}
+          secondaryButtonClass={secondaryButtonClass}
+          onUrlChange={setImportUrl}
+          onClose={() => {
+            if (urlImportSubmitting) return;
+            setShowImportUrlOverlay(false);
+            setImportUrl('');
+          }}
+          onSubmit={handleImportFromUrlClick}
         />
       ) : null}
 
@@ -1015,17 +1054,20 @@ export default function ManagePage({
           </button>
           <button
             className={secondaryButtonClass}
+            onClick={() => {
+              setUrlImportStatus(null);
+              setShowImportUrlOverlay(true);
+            }}
+            type="button"
+          >
+            Import from URL
+          </button>
+          <button
+            className={secondaryButtonClass}
             onClick={handleBackupSongsDataClick}
             disabled={!books.length || dataFileSubmitting}
           >
             {dataFileSubmitting ? 'Preparing...' : 'Backup Library'}
-          </button>
-          <button
-            className={secondaryButtonClass}
-            onClick={() => restoreInputRef.current?.click()}
-            disabled={dataFileSubmitting}
-          >
-            Restore Library
           </button>
           <button
             className={`${dangerGhostButtonClass}`}
@@ -1035,6 +1077,18 @@ export default function ManagePage({
             Clear library
           </button>
         </div>
+
+        {urlImportStatus ? (
+          <div
+            className={`mt-4 rounded-xl px-4 py-3 text-sm ${
+              urlImportStatus.tone === 'error'
+                ? 'border border-rose-200 bg-rose-50 text-rose-700'
+                : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+            }`}
+          >
+            {urlImportStatus.message}
+          </div>
+        ) : null}
 
         {dataFileStatus ? (
           <div
@@ -1066,17 +1120,13 @@ export default function ManagePage({
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf,application/epub+zip,.pdf,.epub"
+          accept="application/pdf,application/epub+zip,application/json,.pdf,.epub,.json"
           multiple
           className="hidden"
-          onChange={(e) => onFilesChosen(e.target.files)}
-        />
-        <input
-          ref={restoreInputRef}
-          type="file"
-          accept="application/json"
-          className="hidden"
-          onChange={(e) => handleRestoreInputChange(e.target.files?.[0])}
+          onChange={(e) => {
+            onFilesChosen(e.target.files);
+            e.target.value = '';
+          }}
         />
       </PageFrame>
 
