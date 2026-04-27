@@ -696,6 +696,26 @@ function buildEpubSectionSrcDoc(htmlText, htmlPath, entries) {
   return `<!doctype html>\n${doc.documentElement.outerHTML}`;
 }
 
+function extractEpubSectionText(htmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlText, 'text/html');
+
+  doc.querySelectorAll('script, style, noscript, svg').forEach((node) => node.remove());
+
+  doc.querySelectorAll('br').forEach((node) => node.replaceWith('\n'));
+  doc.querySelectorAll('p, div, section, article, header, footer, h1, h2, h3, h4, h5, h6, li, tr').forEach((node) => {
+    node.append('\n');
+  });
+
+  return String(doc.body?.textContent || doc.documentElement.textContent || '')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
 function getEpubSpineItems(entries) {
   const containerText = getArchiveEntryText(entries, 'META-INF/container.xml');
 
@@ -738,7 +758,7 @@ function getEpubSpineItems(entries) {
   };
 }
 
-async function loadEpubSectionSrcDoc(file, song) {
+async function loadEpubSectionContent(file, song) {
   const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
   const { spineItems } = getEpubSpineItems(entries);
   const section =
@@ -754,7 +774,10 @@ async function loadEpubSectionSrcDoc(file, song) {
     throw new Error('This EPUB section is empty.');
   }
 
-  return buildEpubSectionSrcDoc(htmlText, section.path, entries);
+  return {
+    srcDoc: buildEpubSectionSrcDoc(htmlText, section.path, entries),
+    text: extractEpubSectionText(htmlText),
+  };
 }
 
 async function extractEpubIndex(file) {
@@ -1217,10 +1240,35 @@ function SongListPage({ books }) {
   );
 }
 
-function PdfControlBar({ className = '', onZoomOut, onZoomIn, onPrevPage, onNextPage, onPrevSong, onNextSong }) {
+function EpubTextSwitch({ showTextContent, onToggle }) {
+  return (
+    <div className="inline-flex items-center gap-2 text-sm font-medium text-slate-600">
+      <span>Text</span>
+      <button
+        type="button"
+        role="switch"
+        aria-label="Show EPUB text content"
+        aria-checked={showTextContent}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition ${
+          showTextContent ? 'border-sky-600 bg-sky-600' : 'border-slate-300 bg-slate-200'
+        }`}
+        onClick={onToggle}
+      >
+        <span
+          className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition ${
+            showTextContent ? 'translate-x-5' : 'translate-x-0'
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
+
+function PdfControlBar({ className = '', beforeControls, onZoomOut, onZoomIn, onPrevPage, onNextPage, onPrevSong, onNextSong }) {
   return (
     <div className={className}>
       <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-slate-200 bg-white/35 px-3 py-2 opacity-45 shadow-lg backdrop-blur transition hover:bg-white/95 hover:opacity-100 focus-within:bg-white/95 focus-within:opacity-100">
+        {beforeControls ? <div className="pr-1">{beforeControls}</div> : null}
         {onZoomOut ? (
           <button
             className={ghostButtonClass}
@@ -1338,8 +1386,9 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, c
   );
 }
 
-function EpubHtmlViewer({ file, song, controls }) {
+function EpubHtmlViewer({ file, song, controls, showTextContent }) {
   const [srcDoc, setSrcDoc] = useState('');
+  const [sectionText, setSectionText] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -1352,13 +1401,17 @@ function EpubHtmlViewer({ file, song, controls }) {
       setLoading(true);
       setError('');
       try {
-        const html = await loadEpubSectionSrcDoc(file, song);
-        if (!cancelled) setSrcDoc(html);
+        const content = await loadEpubSectionContent(file, song);
+        if (!cancelled) {
+          setSrcDoc(content.srcDoc);
+          setSectionText(content.text);
+        }
       } catch (err) {
         console.error(err);
         if (!cancelled) {
           setError('Could not display this EPUB section.');
           setSrcDoc('');
+          setSectionText('');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -1376,7 +1429,13 @@ function EpubHtmlViewer({ file, song, controls }) {
     <div className="flex flex-col gap-3">
       {loading ? <div className={emptyPanelClass}>Loading EPUB section...</div> : null}
       {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
-      {srcDoc ? (
+      {showTextContent && sectionText ? (
+        <div className={`${lyricsPanelClass} min-h-[72vh] whitespace-pre-wrap text-xl leading-7 text-slate-900`}>
+          {sectionText}
+        </div>
+      ) : showTextContent ? (
+        <div className={emptyPanelClass}>No text content found in this EPUB section.</div>
+      ) : srcDoc ? (
         <iframe
           title={song?.title || 'EPUB section'}
           srcDoc={srcDoc}
@@ -1426,6 +1485,7 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
 
   const songIndex = book.songs.findIndex((entry) => entry.id === song.id);
   const [zoomScale, setZoomScale] = useState(() => (window.innerWidth < 640 ? 1.5 : 2));
+  const [showEpubTextContent, setShowEpubTextContent] = useState(false);
 
   const goToSong = (offset) => {
     if (songIndex === -1) return;
@@ -1438,6 +1498,12 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
 
   const controls = isEpubBook ? (
     <PdfControlBar
+      beforeControls={
+        <EpubTextSwitch
+          showTextContent={showEpubTextContent}
+          onToggle={() => setShowEpubTextContent((current) => !current)}
+        />
+      }
       onPrevSong={() => goToSong(-1)}
       onNextSong={() => goToSong(1)}
     />
@@ -1458,14 +1524,14 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
       subtitle={`${book.title} · ${isEpubBook ? `section ${song.page} of ${book.songs.length || '?'}` : `page ${currentPage} of ${book.pageCount || '?'}`}`}
       backTo={`/books/${book.id}`}
       backLabel="Songs"
-      headerAction={<div className="hidden md:block">{controls}</div>}
+      headerAction={isEpubBook ? controls : <div className="hidden md:block">{controls}</div>}
     >
       {isRestoringFiles ? (
         <div className={emptyPanelClass}>Restoring saved files...</div>
       ) : book.missingFile ? (
         <div className={emptyPanelClass}>This book was restored without its source file. Re-add the file to open it.</div>
       ) : isEpubBook ? (
-        <EpubHtmlViewer file={book.file} song={song} controls={controls} />
+        <EpubHtmlViewer file={book.file} song={song} showTextContent={showEpubTextContent} />
       ) : (
         <PdfViewer
           file={book.file}
