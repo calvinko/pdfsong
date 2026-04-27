@@ -46,7 +46,7 @@ const dangerGhostButtonClass =
   'inline-flex items-center justify-center rounded-lg border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45';
 const listItemBaseClass = 'block w-full rounded-xl border px-4 py-3 text-left transition';
 const listItemClass = `${listItemBaseClass} border-slate-200 bg-white hover:bg-slate-50`;
-const compactListItemClass = 'block w-full border border-slate-200 bg-white px-3 py-1.5 text-left transition hover:bg-slate-50';
+const compactListItemClass = 'block w-full border border-slate-200 bg-white px-3 py-2 text-left transition hover:bg-slate-50';
 const listItemActiveClass = `${listItemBaseClass} border-sky-500 bg-sky-50 ring-1 ring-sky-200`;
 
 function loadCompactBookList() {
