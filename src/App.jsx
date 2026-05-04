@@ -30,7 +30,7 @@ const API_BASE_URL = 'https://biblecircle.org/kapi';
 const lyricsPanelClass = 'rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600';
 const panelClass = 'panel rounded-2xl border border-slate-200 bg-white shadow-sm';
 const panelHeaderClass = 'border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900';
-const panelBodyClass = 'p-0';
+const panelBodyClass = 'p-0 px-2 py-1';
 const emptyPanelClass = 'rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600';
 const inputClass =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200';
