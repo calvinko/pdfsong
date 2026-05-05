@@ -875,6 +875,7 @@ async function extractEpubIndex(file) {
   });
 
   if (shouldReplaceEpubSectionTitles(songs)) {
+    console.log('Replacing placeholder EPUB section titles with content-based titles.');
     songs.forEach((song) => {
       if (isPlaceholderEpubSectionTitle(song.title) && song.contentTitle) {
         song.title = song.contentTitle;
