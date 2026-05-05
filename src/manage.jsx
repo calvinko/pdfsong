@@ -1053,7 +1053,7 @@ export default function ManagePage({
           </button>
         }
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 px-2 py-2">
           <button className={primaryButtonClass} onClick={() => fileInputRef.current?.click()}>
             Import Songbooks
           </button>
