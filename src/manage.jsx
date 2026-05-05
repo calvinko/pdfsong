@@ -742,6 +742,11 @@ export default function ManagePage({
         ...current,
         [book.id]: false
       }));
+    } else {
+      setCollapsedBooks((current) => ({
+        ...current,
+        [book.id]: true
+      }));
     }
   }
 
@@ -1255,19 +1260,6 @@ export default function ManagePage({
                       onClick={() => toggleBookEditing(book)}
                     >
                       {editingBooks[book.id] ? 'Done' : 'Edit'}
-                    </button>
-                    <button
-                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
-                      onClick={() =>
-                        setCollapsedBooks((current) => ({
-                          ...current,
-                          [book.id]: !current[book.id]
-                        }))
-                      }
-                      aria-label={collapsedBooks[book.id] ? `Expand ${book.title}` : `Collapse ${book.title}`}
-                      title={collapsedBooks[book.id] ? 'Expand' : 'Collapse'}
-                    >
-                      {collapsedBooks[book.id] ? '▸' : '▾'}
                     </button>
                   </div>
                 </div>
