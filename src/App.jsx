@@ -765,6 +765,24 @@ function extractEpubSectionText(htmlText) {
     .trim();
 }
 
+function isPlaceholderEpubSectionTitle(title) {
+  return /^section(?:[\s._-]*\d+)?\b/i.test(String(title || '').trim());
+}
+
+function firstEpubContentLineTitle(htmlText) {
+  return (
+    extractEpubSectionText(htmlText)
+      .split('\n')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .find((line) => line && !isPlaceholderEpubSectionTitle(line)) || ''
+  );
+}
+
+function shouldReplaceEpubSectionTitles(songs) {
+  const placeholderCount = songs.filter((song) => isPlaceholderEpubSectionTitle(song.title)).length;
+  return placeholderCount > 1 && placeholderCount >= Math.ceil(songs.length / 2);
+}
+
 function getEpubSpineItems(entries) {
   const containerText = getArchiveEntryText(entries, 'META-INF/container.xml');
 
@@ -840,7 +858,8 @@ async function extractEpubIndex(file) {
     const entry = getArchiveEntry(entries, item.path);
     if (!entry) return;
 
-    const doc = parser.parseFromString(strFromU8(entry), 'text/html');
+    const htmlText = strFromU8(entry);
+    const doc = parser.parseFromString(htmlText, 'text/html');
     const songTitle =
       String(doc.querySelector('h1, h2, h3, title')?.textContent || '').replace(/\s+/g, ' ').trim() ||
       item.href.split('/').pop()?.replace(/\.(xhtml|html?)$/i, '').replace(/[_-]+/g, ' ') ||
@@ -849,15 +868,24 @@ async function extractEpubIndex(file) {
     songs.push({
       id: uid('song'),
       title: songTitle,
+      contentTitle: firstEpubContentLineTitle(htmlText),
       page: songs.length + 1,
       htmlPath: item.path,
     });
   });
 
+  if (shouldReplaceEpubSectionTitles(songs)) {
+    songs.forEach((song) => {
+      if (isPlaceholderEpubSectionTitle(song.title) && song.contentTitle) {
+        song.title = song.contentTitle;
+      }
+    });
+  }
+
   return {
     title,
     pageCount: Math.max(1, songs.length),
-    songs,
+    songs: songs.map(({ contentTitle, ...song }) => song),
   };
 }
 
