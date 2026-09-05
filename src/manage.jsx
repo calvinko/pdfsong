@@ -4,6 +4,13 @@ import { getClientInstance } from './clientInstance.js';
 
 const COLLAPSED_BOOKS_STORAGE_KEY = 'songbook-pwa-manage-collapsed-v1';
 
+function getBookPage(book, song) {
+  const offset = Number(book?.pageOffset) || 0;
+  const page = Number(song?.page);
+  if (!Number.isFinite(page)) return null;
+  return page - offset;
+}
+
 function loadCollapsedBooks() {
   try {
     const raw = localStorage.getItem(COLLAPSED_BOOKS_STORAGE_KEY);
@@ -145,6 +152,19 @@ function BookSongEditor({
         />
       </div>
 
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-slate-700">Page offset</label>
+        <input
+          className={`${pageInputClass} w-24`}
+          type="number"
+          value={book.pageOffset || 0}
+          onChange={(e) => updateBook(book.id, { pageOffset: Number(e.target.value) || 0 })}
+        />
+        <p className="text-xs text-slate-500">
+          Difference between the PDF page number and the page number printed in the book (book page = PDF page − offset).
+        </p>
+      </div>
+
       {book.songs.length === 0 ? (
         <div className={emptyPanelClass}>No songs found automatically. Add them manually to start building the list.</div>
       ) : (
@@ -157,7 +177,9 @@ function BookSongEditor({
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
                     <div className="text-sm font-medium text-slate-900">{song.title}</div>
-                    <div className="text-xs text-slate-500">Song {index + 1}</div>
+                    <div className="text-xs text-slate-500">
+                      Song {index + 1} · book p. {getBookPage(book, song) ?? '?'}
+                    </div>
                   </div>
                   <Link
                     to={`/books/${book.id}/songs/${song.id}`}
@@ -227,7 +249,9 @@ function BookSongIndexList({ book, emptyPanelClass }) {
             .map((song) => (
               <div key={song.id} className="flex items-baseline justify-between gap-3 py-2 text-sm">
                 <span className="min-w-0 truncate font-medium text-slate-900">{song.title}</span>
-                <span className="shrink-0 text-xs text-slate-500">p. {song.page}</span>
+                <span className="shrink-0 text-xs text-slate-500">
+                  {book.pageOffset ? `book p. ${getBookPage(book, song)} · ` : ''}p. {song.page}
+                </span>
               </div>
             ))}
         </div>

@@ -193,6 +193,13 @@ function clampPage(value, max) {
   return Math.min(Math.max(1, Math.round(page)), Math.max(1, max || 1));
 }
 
+function getBookPage(book, song) {
+  const offset = Number(book?.pageOffset) || 0;
+  const page = Number(song?.page);
+  if (!Number.isFinite(page)) return null;
+  return page - offset;
+}
+
 function serializeCatalog(books) {
   return books.map((book) => ({
     id: book.id,
@@ -201,6 +208,7 @@ function serializeCatalog(books) {
     fileName: book.fileName,
     format: book.format || inferBookFormat(book.fileName),
     pageCount: book.pageCount,
+    pageOffset: Number(book.pageOffset) || 0,
     songs: book.songs,
     analysisHandle: book.analysisHandle || '',
     analysisStatus: book.analysisStatus || '',
@@ -513,6 +521,69 @@ async function resolveOutlinePage(pdf, dest) {
   return null;
 }
 
+async function readPrintedPageNumber(pdf, pageNumber) {
+  try {
+    const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
+    const textContent = await page.getTextContent();
+    const margin = viewport.height * 0.08;
+
+    const candidates = textContent.items
+      .map((item) => ({
+        text: String(item.str || '').trim(),
+        y: Array.isArray(item.transform) ? item.transform[5] : null
+      }))
+      .filter(
+        (item) =>
+          /^\d{1,4}$/.test(item.text) &&
+          typeof item.y === 'number' &&
+          (item.y <= margin || item.y >= viewport.height - margin)
+      );
+
+    if (candidates.length !== 1) {
+      return null;
+    }
+
+    return Number(candidates[0].text);
+  } catch {
+    return null;
+  }
+}
+
+async function detectPageOffsetFromPrintedNumbers(pdf, songs) {
+  const samplePages = [
+    ...new Set(
+      songs
+        .map((song) => Math.round(Number(song.page)))
+        .filter((page) => Number.isInteger(page) && page > 0 && page <= pdf.numPages)
+    )
+  ].slice(0, 40);
+
+  const diffCounts = new Map();
+  let confidentSamples = 0;
+
+  for (const pageNumber of samplePages) {
+    const printedNumber = await readPrintedPageNumber(pdf, pageNumber);
+    if (printedNumber == null || printedNumber <= 0) continue;
+
+    const diff = pageNumber - printedNumber;
+    diffCounts.set(diff, (diffCounts.get(diff) || 0) + 1);
+    confidentSamples += 1;
+  }
+
+  let bestDiff = 0;
+  let bestCount = 0;
+  diffCounts.forEach((count, diff) => {
+    if (count > bestCount) {
+      bestCount = count;
+      bestDiff = diff;
+    }
+  });
+
+  const isConfident = confidentSamples >= 3 && bestCount >= Math.max(3, Math.ceil(confidentSamples * 0.6));
+  return isConfident ? bestDiff : 0;
+}
+
 async function extractSongIndex(file) {
   const pdf = await fileToPdfDoc(file);
   const metadata = await pdf.getMetadata().catch(() => null);
@@ -528,8 +599,9 @@ async function extractSongIndex(file) {
 
   if (!Array.isArray(outline) || outline.length === 0) {
     return {
-      title: documentTitle, 
+      title: documentTitle,
       pageCount: pdf.numPages,
+      pageOffset: 0,
       songs: []
     };
   }
@@ -561,9 +633,12 @@ async function extractSongIndex(file) {
 
   await visit(outline);
 
+  const pageOffset = await detectPageOffsetFromPrintedNumbers(pdf, songs).catch(() => 0);
+
   return {
     title: documentTitle,
     pageCount: pdf.numPages,
+    pageOffset,
     songs
   };
 }
@@ -1050,7 +1125,7 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
     }));
 
     try {
-      const { title, songs, pageCount } = await extractBookIndex(file);
+      const { title, songs, pageCount, pageOffset } = await extractBookIndex(file);
       const extractedKeys = getBookKeys([file.name, filenameTitle, title]);
 
       if (!allowDuplicates && [...extractedKeys].some((key) => knownBookKeys.has(key))) {
@@ -1081,6 +1156,7 @@ async function booksFromFiles(files, existingBooks = [], onProgress, options = {
         format,
         file,
         pageCount,
+        pageOffset: pageOffset || 0,
         songs,
         analysisHandle: '',
         analysisStatus: '',
@@ -1309,7 +1385,10 @@ function SongListPage({ books }) {
                 className="flex items-baseline justify-between gap-3 px-2 py-2 text-sm transition hover:bg-slate-50"
               >
                 <span className="min-w-0 truncate font-medium text-slate-900">{song.title}</span>
-                <span className="shrink-0 text-xs text-slate-500">{isEpubBook ? 'section' : 'p.'} {song.page}</span>
+                <span className="shrink-0 text-xs text-slate-500">
+                  {!isEpubBook && book.pageOffset ? `book p. ${getBookPage(book, song)} · ` : ''}
+                  {isEpubBook ? 'section' : 'p.'} {song.page}
+                </span>
               </Link>
             ))}
         </div>
@@ -1599,7 +1678,13 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
   return (
     <PageFrame
       title={song.title}
-      subtitle={`${book.title} · ${isEpubBook ? `section ${song.page} of ${book.songs.length || '?'}` : `page ${currentPage} of ${book.pageCount || '?'}`}`}
+      subtitle={`${book.title} · ${
+        isEpubBook
+          ? `section ${song.page} of ${book.songs.length || '?'}`
+          : book.pageOffset
+            ? `book page ${getBookPage(book, song)} · PDF page ${currentPage} of ${book.pageCount || '?'}`
+            : `page ${currentPage} of ${book.pageCount || '?'}`
+      }`}
       backTo={`/books/${book.id}`}
       backLabel="Songs"
       headerAction={isEpubBook ? controls : <div className="hidden md:block">{controls}</div>}
