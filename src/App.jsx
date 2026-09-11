@@ -1421,6 +1421,57 @@ function EpubTextSwitch({ showTextContent, onToggle }) {
   );
 }
 
+const SWIPE_MIN_DISTANCE = 60;
+const SWIPE_MAX_OFF_AXIS_RATIO = 0.7;
+const SWIPE_MAX_DURATION = 800;
+
+function useSwipe({ onSwipeLeft, onSwipeRight }) {
+  const startRef = useRef(null);
+
+  const onTouchStart = (event) => {
+    if (event.touches.length !== 1) {
+      startRef.current = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+    startRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+  };
+
+  const onTouchMove = (event) => {
+    if (event.touches.length > 1) startRef.current = null;
+  };
+
+  const onTouchEnd = (event) => {
+    const start = startRef.current;
+    startRef.current = null;
+    if (!start) return;
+
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    if (Date.now() - start.time > SWIPE_MAX_DURATION) return;
+
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < SWIPE_MIN_DISTANCE) return;
+    if (Math.abs(dy) > Math.abs(dx) * SWIPE_MAX_OFF_AXIS_RATIO) return;
+
+    // When the content is zoomed wide enough to pan sideways, let the pan win
+    // until the user has scrolled to the edge they are swiping toward.
+    const scroller = event.currentTarget;
+    if (scroller && scroller.scrollWidth - scroller.clientWidth > 1) {
+      const maxScrollLeft = scroller.scrollWidth - scroller.clientWidth;
+      if (dx < 0 && scroller.scrollLeft < maxScrollLeft - 1) return;
+      if (dx > 0 && scroller.scrollLeft > 1) return;
+    }
+
+    if (dx < 0) onSwipeLeft?.();
+    else onSwipeRight?.();
+  };
+
+  return { onTouchStart, onTouchMove, onTouchEnd };
+}
+
 function PdfControlBar({ className = '', beforeControls, onZoomOut, onZoomIn, onPrevPage, onNextPage, onPrevSong, onNextSong }) {
   return (
     <div className={className}>
@@ -1486,8 +1537,9 @@ function PdfControlBar({ className = '', beforeControls, onZoomOut, onZoomIn, on
   );
 }
 
-function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, controls }) {
+function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, controls, onSwipeLeft, onSwipeRight }) {
   const canvasRef = useRef(null);
+  const swipeHandlers = useSwipe({ onSwipeLeft, onSwipeRight });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -1535,7 +1587,7 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, c
   return (
     <div className="flex flex-col gap-3">
       {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
-      <div className="relative overflow-auto border border-slate-200 bg-slate-50 p-0">
+      <div className="relative overflow-auto border border-slate-200 bg-slate-50 p-0" {...swipeHandlers}>
         <canvas ref={canvasRef} className="mx-auto block h-auto max-w-full rounded-lg bg-white shadow-sm" />
       </div>
       {controls ? <div className="flex justify-center md:hidden">{controls}</div> : null}
@@ -1543,7 +1595,8 @@ function PdfViewer({ file, url, pageNumber, onPageCount, pageCount, zoomScale, c
   );
 }
 
-function EpubHtmlViewer({ file, song, controls, showTextContent }) {
+function EpubHtmlViewer({ file, song, controls, showTextContent, onSwipeLeft, onSwipeRight }) {
+  const swipeHandlers = useSwipe({ onSwipeLeft, onSwipeRight });
   const [srcDoc, setSrcDoc] = useState('');
   const [sectionText, setSectionText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1583,7 +1636,7 @@ function EpubHtmlViewer({ file, song, controls, showTextContent }) {
   }, [file, song]);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3" {...swipeHandlers}>
       {loading ? <div className={emptyPanelClass}>Loading EPUB section...</div> : null}
       {error ? <div className={`${emptyPanelClass} text-rose-600`}>{error}</div> : null}
       {showTextContent && sectionText ? (
@@ -1694,7 +1747,13 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
       ) : book.missingFile ? (
         <div className={emptyPanelClass}>This book was restored without its source file. Re-add the file to open it.</div>
       ) : isEpubBook ? (
-        <EpubHtmlViewer file={book.file} song={song} showTextContent={showEpubTextContent} />
+        <EpubHtmlViewer
+          file={book.file}
+          song={song}
+          showTextContent={showEpubTextContent}
+          onSwipeLeft={() => goToSong(1)}
+          onSwipeRight={() => goToSong(-1)}
+        />
       ) : (
         <PdfViewer
           file={book.file}
@@ -1703,6 +1762,8 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
           pageCount={book.pageCount}
           zoomScale={zoomScale}
           controls={controls}
+          onSwipeLeft={() => goToPage(currentPage + 1)}
+          onSwipeRight={() => goToPage(currentPage - 1)}
           onPageCount={(count) => {
             if (count !== book.pageCount) {
               updateBook(book.id, { pageCount: count });
