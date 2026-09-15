@@ -200,6 +200,26 @@ function getBookPage(book, song) {
   return page - offset;
 }
 
+function findSongForPage(book, page) {
+  const songs = book?.songs;
+  if (!songs?.length) return null;
+
+  const target = Number(page);
+  if (!Number.isFinite(target)) return null;
+
+  const ordered = songs
+    .slice()
+    .sort((a, b) => Number(a.page) - Number(b.page) || a.title.localeCompare(b.title));
+
+  // The song that owns a page is the last one that starts on or before it.
+  let owner = ordered[0];
+  for (const entry of ordered) {
+    if (Number(entry.page) > target) break;
+    owner = entry;
+  }
+  return owner;
+}
+
 function serializeCatalog(books) {
   return books.map((book) => ({
     id: book.id,
@@ -1690,7 +1710,17 @@ function SongViewerPage({ books, updateBook, isRestoringFiles }) {
   }
 
   const goToPage = (value) => {
-    setSearchParams({ page: String(clampPage(value, book.pageCount || currentPage)) });
+    const nextPage = clampPage(value, book.pageCount || currentPage);
+    const owner = isEpubBook ? null : findSongForPage(book, nextPage);
+
+    // Turning a page can cross into another song, so follow the title along
+    // with the rendered page. Songs sharing a page keep the current one.
+    if (owner && owner.id !== song.id && Number(owner.page) !== Number(song.page)) {
+      navigate(`/books/${book.id}/songs/${owner.id}?page=${nextPage}`);
+      return;
+    }
+
+    setSearchParams({ page: String(nextPage) });
   };
 
   const songIndex = book.songs.findIndex((entry) => entry.id === song.id);
